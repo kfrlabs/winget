@@ -352,6 +352,16 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
         provider.update
       end
     end
+
+    context 'when winget reports no applicable upgrade (0x8A15002B)' do
+      it 'treats update as idempotent success instead of failing' do
+        upgrade_output = Puppet::Util::Execution::ProcessOutput.new(
+          'No available upgrade found.', 0x8A15002B
+        )
+        expect(provider).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git').and_return(upgrade_output)
+        expect(provider.update).to be_nil
+      end
+    end
   end
 
   describe '#latest' do
@@ -438,6 +448,16 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       let(:code) { 0x8A150014 }
       it 'raises a not-installed error instead of a raw exit code' do
         expect { provider.send(:handle_exit_code, output, 'upgrade') }.to raise_error(Puppet::Error, /is not installed/)
+      end
+    end
+
+    context 'with EXIT_UPDATE_NOT_APPLICABLE (0x8A15002B)' do
+      let(:code) { 0x8A15002B }
+      it 'returns nil for upgrade (idempotent)' do
+        expect(provider.send(:handle_exit_code, output, 'upgrade')).to be_nil
+      end
+      it 'raises for other actions' do
+        expect { provider.send(:handle_exit_code, output, 'install') }.to raise_error(Puppet::Error)
       end
     end
 

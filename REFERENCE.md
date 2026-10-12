@@ -7,6 +7,7 @@
 ### Classes
 
 * [`winget`](#winget): == Class: winget  This class manages the installation and configuration of the Windows Package Manager (winget). It ensures winget is availab
+* [`winget::upgrade`](#winget--upgrade): Upgrades every winget package with an available update.
 
 ### Defined types
 
@@ -129,6 +130,149 @@ Whether to manage winget installation. Set to false to disable the bootstrap cla
 while keeping the provider available. Default: true.
 
 Default value: `true`
+
+### <a name="winget--upgrade"></a>`winget::upgrade`
+
+Reads package IDs from the `winget_upgrades` fact and declares one `package`
+resource with `ensure => latest` (winget provider) per ID. Upgrades are
+therefore regular Puppet resources (reporting, noop, `--tags`) instead of
+an out-of-band scheduled task script.
+
+The fact runs `winget upgrade` once per agent run (source round-trips, a few
+seconds) even when the packages are skipped by a `schedule` metaparameter:
+the schedule only skips the `package` resources outside the window, it does
+not skip the fact.
+
+Ordering with the bootstrap class is done at the call site:
+
+  Class['winget'] -> Class['winget::upgrade']
+
+#### Examples
+
+##### Upgrade everything on every run
+
+```puppet
+include winget::upgrade
+```
+
+##### Weekly window with exclusions
+
+```puppet
+class { 'winget::upgrade':
+  exclude          => ['Google.Chrome'],
+  manage_schedule  => true,
+  schedule_period  => 'weekly',
+  schedule_weekday => 'Sunday',
+  schedule_range   => '3 - 5',
+}
+```
+
+##### Reuse a schedule declared elsewhere
+
+```puppet
+schedule { 'maintenance-window':
+  period  => weekly,
+  weekday => 'Sunday',
+  range   => '3 - 5',
+  repeat  => 1,
+}
+
+class { 'winget::upgrade':
+  schedule => 'maintenance-window',
+}
+```
+
+#### Parameters
+
+The following parameters are available in the `winget::upgrade` class:
+
+* [`exclude`](#-winget--upgrade--exclude)
+* [`only`](#-winget--upgrade--only)
+* [`schedule`](#-winget--upgrade--schedule)
+* [`manage_schedule`](#-winget--upgrade--manage_schedule)
+* [`schedule_name`](#-winget--upgrade--schedule_name)
+* [`schedule_period`](#-winget--upgrade--schedule_period)
+* [`schedule_range`](#-winget--upgrade--schedule_range)
+* [`schedule_weekday`](#-winget--upgrade--schedule_weekday)
+* [`schedule_repeat`](#-winget--upgrade--schedule_repeat)
+
+##### <a name="-winget--upgrade--exclude"></a>`exclude`
+
+Data type: `Array[String[1]]`
+
+Winget IDs never upgraded (case-insensitive).
+
+Default value: `[]`
+
+##### <a name="-winget--upgrade--only"></a>`only`
+
+Data type: `Array[String[1]]`
+
+When non-empty, upgrade only these winget IDs (case-insensitive).
+Combined with `exclude`: an ID must be in `only` and not in `exclude`.
+
+Default value: `[]`
+
+##### <a name="-winget--upgrade--schedule"></a>`schedule`
+
+Data type: `Optional[String[1]]`
+
+Name of a Puppet `schedule` resource applied as metaparameter to every
+managed package. Declare the resource yourself, or set `manage_schedule`
+to have this class declare it. Undef (default) means no schedule: packages
+are enforced on every agent run.
+
+Default value: `undef`
+
+##### <a name="-winget--upgrade--manage_schedule"></a>`manage_schedule`
+
+Data type: `Boolean`
+
+Whether this class declares `schedule { $schedule: ... }` from the
+`schedule_*` parameters below.
+
+Default value: `false`
+
+##### <a name="-winget--upgrade--schedule_name"></a>`schedule_name`
+
+Data type: `String[1]`
+
+Name used for the managed schedule when `schedule` is undef.
+
+Default value: `'winget-upgrade-window'`
+
+##### <a name="-winget--upgrade--schedule_period"></a>`schedule_period`
+
+Data type: `Enum['hourly', 'daily', 'weekly', 'monthly']`
+
+`schedule` period.
+
+Default value: `'weekly'`
+
+##### <a name="-winget--upgrade--schedule_range"></a>`schedule_range`
+
+Data type: `String[1]`
+
+`schedule` range, e.g. `'3 - 5'` (03:00-05:00).
+
+Default value: `'3 - 5'`
+
+##### <a name="-winget--upgrade--schedule_weekday"></a>`schedule_weekday`
+
+Data type: `String[1]`
+
+`schedule` weekday, only used when `schedule_period` is `weekly`.
+
+Default value: `'Sunday'`
+
+##### <a name="-winget--upgrade--schedule_repeat"></a>`schedule_repeat`
+
+Data type: `Integer[1]`
+
+`schedule` repeat: how many times the resources may be enforced inside
+the window.
+
+Default value: `1`
 
 ## Defined types
 

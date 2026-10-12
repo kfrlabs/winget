@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Class `winget::upgrade`: declares one `package` with `ensure => latest`
+  (winget provider) per ID from the new `winget_upgrades` fact, with `exclude` /
+  `only` filters and an optional Puppet `schedule` metaparameter (managed via
+  `manage_schedule` or declared externally)
+- Custom fact `winget_upgrades`: IDs of winget packages with an available
+  update, resolved with the shared `PuppetX::Winget::Facts` helper
+
+### Fixed
+- `PuppetX::Winget::Facts` now explicitly requires `puppet_x/winget/path_resolver`,
+  so the facts also resolve when the provider was never loaded (e.g. standalone
+  `facter` runs)
+- Provider treats `winget upgrade` exit code `0x8A15002B` (update not applicable,
+  e.g. `7zip.7zip` `26.04` available vs `26.04.00.0` installed) as idempotent
+  success for `upgrade` instead of failing `ensure => latest` every run
+
 ## [0.2.1] - 2026-10-12
 
 ### Added

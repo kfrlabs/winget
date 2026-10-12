@@ -94,6 +94,44 @@ package { 'Microsoft.VisualStudioCode':
 }
 ```
 
+#### Bulk Upgrade (all packages with available updates)
+
+The `winget::upgrade` class reads the IDs from the `winget_upgrades` fact and
+declares one `package` with `ensure => latest` per ID, so upgrades are regular
+Puppet resources (reporting, noop, `--tags`) instead of a scheduled task script.
+
+```puppet
+include winget::upgrade
+
+# Guarantee ordering: bootstrap before upgrades
+Class['winget'] -> Class['winget::upgrade']
+```
+
+With exclusions and a weekly maintenance window (Puppet `schedule`
+metaparameter, no Windows scheduled task):
+
+```puppet
+class { 'winget::upgrade':
+  exclude          => ['Google.Chrome'],
+  manage_schedule  => true,
+  schedule_period  => 'weekly',
+  schedule_weekday => 'Sunday',
+  schedule_range   => '3 - 5',
+}
+```
+
+Or reuse a `schedule` resource declared elsewhere (e.g. in a profile):
+
+```puppet
+class { 'winget::upgrade':
+  schedule => 'maintenance-window',
+}
+```
+
+Note: the `winget_upgrades` fact runs `winget upgrade` once per agent run
+even when the packages are skipped by the schedule; the schedule only skips
+the `package` resources outside the window.
+
 #### Microsoft Store Source
 
 ```puppet
@@ -233,7 +271,7 @@ Class['winget'] -> Package <| provider == winget |>
 
 ### Facts
 
-The module provides two custom facts for inventory and conditional logic:
+The module provides three custom facts for inventory and conditional logic:
 
 #### winget_path
 
@@ -256,6 +294,12 @@ if $facts['winget_version'] and versioncmp($facts['winget_version'], '1.5.0') >=
   notify { 'winget version is >= 1.5.0': }
 }
 ```
+
+#### winget_upgrades
+
+Returns the list of winget package IDs with an available upgrade (e.g.
+`['Git.Git']`), or `[]` when winget is absent or the query fails. Used by
+`Class['winget::upgrade']` to declare one `package` per ID.
 
 ## Reference
 

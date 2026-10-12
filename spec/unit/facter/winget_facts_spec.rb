@@ -172,5 +172,142 @@ RSpec.describe PuppetX::Winget::Facts do
       expect(content).to include("Facter.add('winget_version')")
       expect(content).to include('PuppetX::Winget::Facts.winget_version')
     end
+
+    it 'defines a winget_upgrades fact confined to windows that delegates to the helper' do
+      content = File.read(File.join(lib_root, 'facter', 'winget_upgrades.rb'))
+      expect(content).to include("Facter.add('winget_upgrades')")
+      expect(content).to include('PuppetX::Winget::Facts.winget_upgrades')
+    end
+  end
+
+  describe '.winget_upgrades' do
+    let(:winget_exe) do
+      'C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.8.2391_x64__8wekyb3d8bbwe/winget.exe'
+    end
+    let(:upgrade_output) do
+      <<~OUTPUT
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+        Notepad++         Notepad++.Notepad++     8.5.4     8.6.0       winget
+        2 upgrades available.
+      OUTPUT
+    end
+
+    context 'when winget is absent' do
+      before(:each) do
+        allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(nil)
+      end
+
+      it 'returns an empty array' do
+        expect(described_class.winget_upgrades).to eq([])
+      end
+    end
+
+    context 'when the executable does not exist' do
+      before(:each) do
+        allow(described_class).to receive(:winget_path).and_return(winget_exe)
+        allow(File).to receive(:exist?).with(winget_exe).and_return(false)
+      end
+
+      it 'returns an empty array' do
+        expect(described_class.winget_upgrades).to eq([])
+      end
+    end
+
+    context 'when winget upgrade fails' do
+      before(:each) do
+        allow(described_class).to receive(:winget_path).and_return(winget_exe)
+        allow(File).to receive(:exist?).with(winget_exe).and_return(true)
+        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+          Puppet::Util::Execution::ProcessOutput.new('', 1),
+        )
+      end
+
+      it 'returns an empty array' do
+        expect(described_class.winget_upgrades).to eq([])
+      end
+    end
+
+    context 'when upgrades are available' do
+      before(:each) do
+        allow(described_class).to receive(:winget_path).and_return(winget_exe)
+        allow(File).to receive(:exist?).with(winget_exe).and_return(true)
+        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+          Puppet::Util::Execution::ProcessOutput.new(upgrade_output, 0),
+        )
+      end
+
+      it 'returns the upgradable package IDs' do
+        expect(described_class.winget_upgrades).to eq(['Git.Git', 'Notepad++.Notepad++'])
+      end
+
+      it 'queries winget non-interactively' do
+        expect(Puppet::Util::Execution).to receive(:execute).with(
+          [winget_exe, 'upgrade', '--accept-source-agreements', '--disable-interactivity'],
+          failonfail: false, combine: true,
+        ).and_return(
+          Puppet::Util::Execution::ProcessOutput.new(upgrade_output, 0),
+        )
+        expect(described_class.winget_upgrades).to eq(['Git.Git', 'Notepad++.Notepad++'])
+      end
+    end
+
+    context 'when execution raises an error' do
+      before(:each) do
+        allow(described_class).to receive(:winget_path).and_return(winget_exe)
+        allow(File).to receive(:exist?).with(winget_exe).and_return(true)
+        allow(Puppet::Util::Execution).to receive(:execute).and_raise(StandardError.new('boom'))
+      end
+
+      it 'returns an empty array and does not raise' do
+        expect(described_class.winget_upgrades).to eq([])
+      end
+    end
+
+    context 'with an explicit path override' do
+      before(:each) do
+        allow(File).to receive(:exist?).with(winget_exe).and_return(true)
+        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+          Puppet::Util::Execution::ProcessOutput.new(upgrade_output, 0),
+        )
+      end
+
+      it 'uses the given path without calling the resolver' do
+        expect(PuppetX::Winget::PathResolver).not_to receive(:winget_path)
+        expect(described_class.winget_upgrades(winget_exe)).to eq(['Git.Git', 'Notepad++.Notepad++'])
+      end
+    end
+  end
+
+  describe '.parse_winget_upgrade' do
+    it 'returns an empty array for nil or empty output' do
+      expect(described_class.parse_winget_upgrade(nil)).to eq([])
+      expect(described_class.parse_winget_upgrade('')).to eq([])
+    end
+
+    it 'returns an empty array when no upgrades are available' do
+      expect(described_class.parse_winget_upgrade("No applicable update found.\n")).to eq([])
+    end
+
+    it 'parses a French-localized table' do
+      output = <<~OUTPUT
+        Nom               Id                      Version   Disponible  Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+      OUTPUT
+      expect(described_class.parse_winget_upgrade(output)).to eq(['Git.Git'])
+    end
+
+    it 'deduplicates IDs and skips footer lines' do
+      output = <<~OUTPUT
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+        Git               Git.Git                 2.40.0    2.41.0      winget
+        2 upgrades available.
+      OUTPUT
+      expect(described_class.parse_winget_upgrade(output)).to eq(['Git.Git'])
+    end
   end
 end

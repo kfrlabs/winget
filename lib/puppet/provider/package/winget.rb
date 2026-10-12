@@ -38,6 +38,7 @@ unless defined?(::PuppetX::Winget::Provider::EXIT_SUCCESS)
         EXIT_BLOCKED_BY_POLICY = 0x8A15000A        # Blocked by policy
         EXIT_INSTALLER_FAILED = 0x8A15000B         # Installer failed
         EXIT_NO_INSTALLED_PACKAGE_FOUND = 0x8A150014 # No installed package found matching input criteria (upgrade of absent package)
+        EXIT_UPDATE_NOT_APPLICABLE = 0x8A15002B      # No applicable upgrade (upgrade lists a version winget deems not newer)
 
         # Non-interactive flags per subcommand, verified against
         # https://learn.microsoft.com/en-us/windows/package-manager/winget/.
@@ -334,6 +335,12 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
       raise Puppet::Error, _('winget %{action} failed: %{output}') % { action: action, output: output }
     when PuppetX::Winget::Provider::EXIT_NO_UPGRADE_AVAILABLE
       # No upgrade available - idempotent success for upgrade
+      return nil if action == 'upgrade'
+      raise Puppet::Error, _('winget %{action} failed: %{output}') % { action: action, output: output }
+    when PuppetX::Winget::Provider::EXIT_UPDATE_NOT_APPLICABLE
+      # winget listed an upgrade but its own version comparison finds
+      # nothing newer (e.g. 7zip '26.04' available vs '26.04.00.0'
+      # installed): idempotent success for upgrade
       return nil if action == 'upgrade'
       raise Puppet::Error, _('winget %{action} failed: %{output}') % { action: action, output: output }
     when PuppetX::Winget::Provider::EXIT_REBOOT_REQUIRED
