@@ -173,8 +173,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   # Query the current state of the package
   # @return [Hash, nil] Current package properties or nil if not installed
   def query
-    packages = self.class.instances_list
-    pkg = packages[resource[:name].downcase]
+    pkg = installed_entry
     return nil unless pkg
 
     {
@@ -182,6 +181,14 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
       ensure: pkg[:version],
       provider: :winget
     }
+  end
+
+  # Installed package entry from `winget list`, memoized per resource
+  # instance so `query` and `latest` share a single listing. Cleared after
+  # every successful install/uninstall/upgrade (see below).
+  # @return [Hash, nil] Package info or nil if not installed
+  def installed_entry
+    @installed_entry ||= self.class.instances_list[resource[:name].downcase]
   end
 
   # Get list of all installed packages via winget list
@@ -233,6 +240,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
     output = winget_exec(*args)
     handle_exit_code(output, 'install')
+    @installed_entry = nil
   end
 
   # Uninstall a package
@@ -245,6 +253,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
     output = winget_exec(*args)
     handle_exit_code(output, 'uninstall')
+    @installed_entry = nil
   end
 
   # Upgrade a package to latest version.
@@ -276,9 +285,14 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     else
       handle_exit_code(output, 'upgrade')
     end
+    @installed_entry = nil
   end
 
-  # Get the latest available version of a package
+  # Get the latest available version of a package.
+  # When winget advertises a version its own upgrade deems not newer than
+  # the installed one (e.g. 7zip '26.04' available vs '26.04.00.0'
+  # installed), report the installed version so `ensure => latest` stays in
+  # sync instead of attempting (and logging) an upgrade on every run.
   # @return [String, nil] Latest version or nil if not found/error
   def latest
     return nil unless self.class.suitable?
@@ -292,13 +306,29 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
     # Parse version from winget show output
     match = output.match(%r{Version:\s+([\d.]+)}i)
-    match ? match[1] : nil
+    return nil unless match
+
+    candidate = match[1]
+    current = installed_entry && installed_entry[:version]
+    return current if current && !version_newer?(candidate, current)
+
+    candidate
   rescue StandardError => e
     Puppet.debug("winget show failed: #{e.message}")
     nil
   end
 
   private
+
+  # Compare winget versions with numeric semantics: trailing zero segments
+  # are insignificant, so '26.04' and '26.04.00.0' compare equal. Falls back
+  # to plain string inequality for versions Gem cannot parse.
+  # @return [Boolean] True when candidate is strictly newer than current
+  def version_newer?(candidate, current)
+    Gem::Version.new(candidate) > Gem::Version.new(current)
+  rescue ArgumentError
+    candidate != current
+  end
 
   # Extract source from install_options hash/array
   # install_options can be: ['--source=winget'] or [{ source: 'winget' }] or ['--source', 'winget']

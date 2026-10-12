@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Provider treats `winget upgrade` exit code `0x8A15002B` (update not applicable,
   e.g. `7zip.7zip` `26.04` available vs `26.04.00.0` installed) as idempotent
   success for `upgrade` instead of failing `ensure => latest` every run
+- Provider `latest` reports the installed version when winget advertises a
+  version its own upgrade deems not newer, so `ensure => latest` stays in
+  sync instead of logging a corrective change on every run; `query` and
+  `latest` now share a single memoized `winget list` per resource
 
 ## [0.2.1] - 2026-10-12
 

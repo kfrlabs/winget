@@ -370,6 +370,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     before(:each) do
       allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(winget_path)
       allow(described_class).to receive(:suitable?).and_return(true)
+      allow(described_class).to receive(:instances_list).and_return({})
     end
 
     context 'when package is found' do
@@ -377,6 +378,45 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
         output = Puppet::Util::Execution::ProcessOutput.new("Version: 2.41.0\nOther info", 0)
         expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git').and_return(output)
         expect(provider.latest).to eq('2.41.0')
+      end
+    end
+
+    context 'when the advertised version is strictly newer than installed' do
+      before(:each) do
+        allow(described_class).to receive(:instances_list).and_return(
+          'git.git' => { name: 'Git', version: '2.40.0', source: 'winget', id: 'Git.Git' },
+        )
+      end
+
+      it 'returns the advertised version' do
+        output = Puppet::Util::Execution::ProcessOutput.new("Version: 2.41.0\nOther info", 0)
+        expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git').and_return(output)
+        expect(provider.latest).to eq('2.41.0')
+      end
+    end
+
+    context 'when the advertised version is not newer than installed (7zip 26.04 vs 26.04.00.0)' do
+      before(:each) do
+        allow(described_class).to receive(:instances_list).and_return(
+          'git.git' => { name: 'Git', version: '2.40.00.0', source: 'winget', id: 'Git.Git' },
+        )
+      end
+
+      it 'returns the installed version so ensure => latest stays in sync' do
+        output = Puppet::Util::Execution::ProcessOutput.new("Version: 2.40\nOther info", 0)
+        expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git').and_return(output)
+        expect(provider.latest).to eq('2.40.00.0')
+      end
+    end
+
+    context 'when query and latest run on the same resource' do
+      it 'lists installed packages only once' do
+        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+          Puppet::Util::Execution::ProcessOutput.new("Name  Id  Version\n---\nGit  Git.Git  2.40.0", 0),
+        )
+        expect(described_class).to receive(:instances_list).once.and_call_original
+        provider.query
+        provider.latest
       end
     end
 
@@ -396,6 +436,19 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       it 'returns nil' do
         expect(provider.latest).to be_nil
       end
+    end
+  end
+
+  describe '#version_newer?' do
+    it 'treats trailing zero segments as insignificant' do
+      expect(provider.send(:version_newer?, '26.04', '26.04.00.0')).to be false
+      expect(provider.send(:version_newer?, '2.41.0', '2.40.0')).to be true
+      expect(provider.send(:version_newer?, '2.40.0', '2.41.0')).to be false
+    end
+
+    it 'falls back to string inequality for unparsable versions' do
+      expect(provider.send(:version_newer?, 'abc', 'abc')).to be false
+      expect(provider.send(:version_newer?, 'abd', 'abc')).to be true
     end
   end
 
