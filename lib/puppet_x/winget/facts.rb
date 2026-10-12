@@ -29,7 +29,7 @@ module PuppetX
           output = Puppet::Util::Execution.execute([winget, '--version'], failonfail: false, combine: true)
           return nil unless output.exitstatus.zero?
 
-          version = output.stdout.strip.sub(%r{\Av}, '')
+          version = output.strip.sub(%r{\Av}, '')
           version.empty? ? nil : version
         rescue StandardError
           nil

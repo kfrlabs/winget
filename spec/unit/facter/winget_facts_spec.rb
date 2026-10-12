@@ -80,7 +80,7 @@ RSpec.describe PuppetX::Winget::Facts do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
         allow(Puppet::Util::Execution).to receive(:execute).and_return(
-          double('output', exitstatus: 1, stdout: '', stderr: 'error')
+          Puppet::Util::Execution::ProcessOutput.new('', 1)
         )
       end
 
@@ -94,7 +94,7 @@ RSpec.describe PuppetX::Winget::Facts do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
         allow(Puppet::Util::Execution).to receive(:execute).and_return(
-          double('output', exitstatus: 0, stdout: "v1.8.2391\n")
+          Puppet::Util::Execution::ProcessOutput.new("v1.8.2391\n", 0)
         )
       end
 
@@ -108,7 +108,7 @@ RSpec.describe PuppetX::Winget::Facts do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
         allow(Puppet::Util::Execution).to receive(:execute).and_return(
-          double('output', exitstatus: 0, stdout: "1.8.2391\n")
+          Puppet::Util::Execution::ProcessOutput.new("1.8.2391\n", 0)
         )
       end
 
@@ -122,7 +122,7 @@ RSpec.describe PuppetX::Winget::Facts do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
         allow(Puppet::Util::Execution).to receive(:execute).and_return(
-          double('output', exitstatus: 0, stdout: "\n")
+          Puppet::Util::Execution::ProcessOutput.new("\n", 0)
         )
       end
 
@@ -147,7 +147,7 @@ RSpec.describe PuppetX::Winget::Facts do
       before(:each) do
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
         allow(Puppet::Util::Execution).to receive(:execute).and_return(
-          double('output', exitstatus: 0, stdout: 'v1.8.2391')
+          Puppet::Util::Execution::ProcessOutput.new('v1.8.2391', 0)
         )
       end
 

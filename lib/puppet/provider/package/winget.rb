@@ -8,7 +8,10 @@
 # - Is NOT the default provider (explicit opt-in only)
 # - Requires winget to be installed; returns unsuitable with clear message if absent
 # - Supports: installable, uninstallable, upgradeable, versionable, install_options, uninstall_options
-# - Always passes: --accept-package-agreements, --accept-source-agreements, --disable-interactivity, --exact, --silent
+# - Appends non-interactive flags AFTER the subcommand, using only flags
+#   documented for that subcommand (install/upgrade: package+source
+#   agreements, no-interactivity, exact, silent; uninstall: minus package
+#   agreements; show/list: source agreements, no-interactivity, exact)
 # - Source selectable (winget vs msstore) via install_options
 #
 # @api private
@@ -34,6 +37,17 @@ unless defined?(::PuppetX::Winget::Provider::EXIT_SUCCESS)
         EXIT_SOURCE_ERROR = 0x8A150009             # Source error
         EXIT_BLOCKED_BY_POLICY = 0x8A15000A        # Blocked by policy
         EXIT_INSTALLER_FAILED = 0x8A15000B         # Installer failed
+
+        # Non-interactive flags per subcommand, verified against
+        # https://learn.microsoft.com/en-us/windows/package-manager/winget/.
+        # These are subcommand options: they must follow the subcommand and
+        # only flags documented for that subcommand may be used, otherwise
+        # winget fails with "Argument name was not recognized".
+        INSTALL_FLAGS = ['--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity', '--exact', '--silent'].freeze
+        UPGRADE_FLAGS = INSTALL_FLAGS
+        UNINSTALL_FLAGS = ['--accept-source-agreements', '--disable-interactivity', '--exact', '--silent'].freeze
+        SHOW_FLAGS = ['--accept-source-agreements', '--disable-interactivity', '--exact'].freeze
+        LIST_FLAGS = ['--accept-source-agreements', '--disable-interactivity'].freeze
       end
     end
   end
@@ -86,11 +100,25 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     false
   end
 
-  # Execute a winget command with common flags
-  # @param args [Array<String>] Command arguments (subcommand and options)
-  # @return [Puppet::Util::Execution::ProcessOutput] Output object with stdout, stderr, exitstatus
+  # Execute a winget command with the non-interactive flags supported by
+  # the given subcommand. Flags always follow the subcommand: winget does
+  # not accept them in front of it.
+  # @param args [Array<String>] Command arguments (subcommand first, then options)
+  # @return [Puppet::Util::Execution::ProcessOutput] Combined command output (a String) with exitstatus
   def winget_exec(*args)
-    cmd = [self.class.winget_path, '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity', '--exact', '--silent', *args]
+    flags = case args.first
+            when 'install', 'upgrade'
+              PuppetX::Winget::Provider::INSTALL_FLAGS
+            when 'uninstall'
+              PuppetX::Winget::Provider::UNINSTALL_FLAGS
+            when 'show'
+              PuppetX::Winget::Provider::SHOW_FLAGS
+            when 'list'
+              PuppetX::Winget::Provider::LIST_FLAGS
+            else
+              []
+            end
+    cmd = [self.class.winget_path, *args, *flags]
     Puppet::Util::Execution.execute(cmd, failonfail: false, combine: true)
   end
 
@@ -159,11 +187,11 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   def self.instances_list
     return {} unless suitable?
 
-    output = Puppet::Util::Execution.execute([winget_path, 'list', '--silent'], failonfail: false, combine: true)
+    output = Puppet::Util::Execution.execute([winget_path, 'list', *PuppetX::Winget::Provider::LIST_FLAGS], failonfail: false, combine: true)
     return {} unless output.exitstatus == PuppetX::Winget::Provider::EXIT_SUCCESS
 
     provider = new
-    provider.parse_winget_list(output.stdout)
+    provider.parse_winget_list(output)
   rescue StandardError => e
     Puppet.debug("winget list failed: #{e.message}")
     {}
@@ -252,7 +280,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     return nil unless output.exitstatus == PuppetX::Winget::Provider::EXIT_SUCCESS
 
     # Parse version from winget show output
-    match = output.stdout.match(%r{Version:\s+([\d.]+)}i)
+    match = output.match(%r{Version:\s+([\d.]+)}i)
     match ? match[1] : nil
   rescue StandardError => e
     Puppet.debug("winget show failed: #{e.message}")
@@ -293,11 +321,11 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     when PuppetX::Winget::Provider::EXIT_NO_APPLICABLE_INSTALLER
       # Already installed (during install) - idempotent success
       return nil if action == 'install'
-      raise Puppet::Error, _('winget %{action} failed: %{output}') % { action: action, output: output.stdout }
+      raise Puppet::Error, _('winget %{action} failed: %{output}') % { action: action, output: output }
     when PuppetX::Winget::Provider::EXIT_NO_UPGRADE_AVAILABLE
       # No upgrade available - idempotent success for upgrade
       return nil if action == 'upgrade'
-      raise Puppet::Error, _('winget %{action} failed: %{output}') % { action: action, output: output.stdout }
+      raise Puppet::Error, _('winget %{action} failed: %{output}') % { action: action, output: output }
     when PuppetX::Winget::Provider::EXIT_REBOOT_REQUIRED
       # Reboot required - treat as success but warn
       Puppet.warning(_('winget %{action} succeeded but a reboot is required') % { action: action })
@@ -305,7 +333,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     when PuppetX::Winget::Provider::EXIT_NOT_FOUND
       raise Puppet::Error, _('Package \'%{name}\' not found in winget source') % { name: resource[:name] }
     when PuppetX::Winget::Provider::EXIT_BLOCKED_BY_POLICY
-      raise Puppet::Error, _('winget %{action} blocked by policy: %{output}') % { action: action, output: output.stdout }
+      raise Puppet::Error, _('winget %{action} blocked by policy: %{output}') % { action: action, output: output }
     when PuppetX::Winget::Provider::EXIT_HASH_MISMATCH
       raise Puppet::Error, _('winget %{action} failed: installer hash mismatch') % { action: action }
     when PuppetX::Winget::Provider::EXIT_NETWORK_ERROR
@@ -313,13 +341,13 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     when PuppetX::Winget::Provider::EXIT_SOURCE_ERROR
       raise Puppet::Error, _('winget %{action} failed: source error') % { action: action }
     when PuppetX::Winget::Provider::EXIT_INSTALLER_FAILED
-      raise Puppet::Error, _('winget %{action} failed: installer error: %{output}') % { action: action, output: output.stdout }
+      raise Puppet::Error, _('winget %{action} failed: installer error: %{output}') % { action: action, output: output }
     when PuppetX::Winget::Provider::EXIT_USER_CANCELLED
       raise Puppet::Error, _('winget %{action} cancelled by user') % { action: action }
     when PuppetX::Winget::Provider::EXIT_INVALID_ARGUMENT
-      raise Puppet::Error, _('winget %{action} failed: invalid argument: %{output}') % { action: action, output: output.stdout }
+      raise Puppet::Error, _('winget %{action} failed: invalid argument: %{output}') % { action: action, output: output }
     else
-      raise Puppet::Error, _('winget %{action} failed with exit code %{code}: %{output}') % { action: action, code: output.exitstatus, output: output.stdout }
+      raise Puppet::Error, _('winget %{action} failed with exit code %{code}: %{output}') % { action: action, code: output.exitstatus, output: output }
     end
   end
 end

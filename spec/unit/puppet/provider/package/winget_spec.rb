@@ -95,13 +95,31 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(winget_path)
     end
 
-    it 'executes winget with common flags' do
+    it 'places the subcommand first and appends install flags' do
       expect(Puppet::Util::Execution).to receive(:execute).with(
-        [winget_path, '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity', '--exact', '--silent', 'list', '--silent'],
+        [winget_path, 'install', '--id', 'Git.Git', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity', '--exact', '--silent'],
         hash_including(failonfail: false, combine: true)
-      ).and_return(double('output', exitstatus: 0, stdout: '', stderr: ''))
+      ).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
 
-      provider.winget_exec('list', '--silent')
+      provider.winget_exec('install', '--id', 'Git.Git')
+    end
+
+    it 'uses only show-supported flags for show' do
+      expect(Puppet::Util::Execution).to receive(:execute).with(
+        [winget_path, 'show', '--id', 'Git.Git', '--accept-source-agreements', '--disable-interactivity', '--exact'],
+        hash_including(failonfail: false, combine: true)
+      ).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
+
+      provider.winget_exec('show', '--id', 'Git.Git')
+    end
+
+    it 'uses only uninstall-supported flags for uninstall' do
+      expect(Puppet::Util::Execution).to receive(:execute).with(
+        [winget_path, 'uninstall', '--id', 'Git.Git', '--accept-source-agreements', '--disable-interactivity', '--exact', '--silent'],
+        hash_including(failonfail: false, combine: true)
+      ).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
+
+      provider.winget_exec('uninstall', '--id', 'Git.Git')
     end
   end
 
@@ -215,7 +233,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     context 'with ensure => installed' do
       it 'calls winget install with --id' do
         expect(provider).to receive(:winget_exec).with('install', '--id', 'Git.Git').and_return(
-          double('output', exitstatus: 0, stdout: '')
+          Puppet::Util::Execution::ProcessOutput.new('', 0)
         )
         provider.install
       end
@@ -232,7 +250,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
       it 'calls winget install with --version' do
         expect(provider).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--version', '2.40.0').and_return(
-          double('output', exitstatus: 0, stdout: '')
+          Puppet::Util::Execution::ProcessOutput.new('', 0)
         )
         provider.install
       end
@@ -250,7 +268,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
       it 'passes --source from install_options hash' do
         expect(provider).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--source', 'msstore').and_return(
-          double('output', exitstatus: 0, stdout: '')
+          Puppet::Util::Execution::ProcessOutput.new('', 0)
         )
         provider.install
       end
@@ -268,7 +286,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
       it 'passes --source from string array' do
         expect(provider).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--source', 'msstore').and_return(
-          double('output', exitstatus: 0, stdout: '')
+          Puppet::Util::Execution::ProcessOutput.new('', 0)
         )
         provider.install
       end
@@ -285,7 +303,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     it 'calls winget uninstall with --id' do
       expect(provider).to receive(:winget_exec).with('uninstall', '--id', 'Git.Git').and_return(
-        double('output', exitstatus: 0, stdout: '')
+        Puppet::Util::Execution::ProcessOutput.new('', 0)
       )
       provider.uninstall
     end
@@ -302,7 +320,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
       it 'passes uninstall_options' do
         expect(provider).to receive(:winget_exec).with('uninstall', '--id', 'Git.Git', '--preserve-data').and_return(
-          double('output', exitstatus: 0, stdout: '')
+          Puppet::Util::Execution::ProcessOutput.new('', 0)
         )
         provider.uninstall
       end
@@ -319,7 +337,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     it 'calls winget upgrade with --id' do
       expect(provider).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git').and_return(
-        double('output', exitstatus: 0, stdout: '')
+        Puppet::Util::Execution::ProcessOutput.new('', 0)
       )
       provider.update
     end
@@ -335,7 +353,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     context 'when package is found' do
       it 'returns the latest version' do
-        output = double('output', exitstatus: 0, stdout: "Version: 2.41.0\nOther info")
+        output = Puppet::Util::Execution::ProcessOutput.new("Version: 2.41.0\nOther info", 0)
         expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git').and_return(output)
         expect(provider.latest).to eq('2.41.0')
       end
@@ -343,7 +361,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     context 'when package is not found' do
       it 'returns nil' do
-        output = double('output', exitstatus: 1, stdout: 'Not found')
+        output = Puppet::Util::Execution::ProcessOutput.new('Not found', 1)
         expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git').and_return(output)
         expect(provider.latest).to be_nil
       end
@@ -361,7 +379,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
   end
 
   describe '#handle_exit_code' do
-    let(:output) { double('output', exitstatus: code, stdout: 'error output') }
+    let(:output) { Puppet::Util::Execution::ProcessOutput.new('error output', code) }
 
     context 'with EXIT_SUCCESS (0)' do
       let(:code) { 0 }
@@ -423,7 +441,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     it 'returns provider instances for each installed package' do
       allow(Puppet::Util::Execution).to receive(:execute).and_return(
-        double('output', exitstatus: 0, stdout: "Name  Id  Version\n---\nGit  Git.Git  2.40.0")
+        Puppet::Util::Execution::ProcessOutput.new("Name  Id  Version\n---\nGit  Git.Git  2.40.0", 0)
       )
       instances = described_class.instances
       expect(instances.size).to eq(1)
@@ -447,7 +465,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     it 'returns current package state when installed' do
       allow(Puppet::Util::Execution).to receive(:execute).and_return(
-        double('output', exitstatus: 0, stdout: "Name  Id  Version\n---\nGit  Git.Git  2.40.0")
+        Puppet::Util::Execution::ProcessOutput.new("Name  Id  Version\n---\nGit  Git.Git  2.40.0", 0)
       )
       result = provider.query
       expect(result).to eq({ name: 'Git.Git', ensure: '2.40.0', provider: :winget })
@@ -455,7 +473,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     it 'returns nil when not installed' do
       allow(Puppet::Util::Execution).to receive(:execute).and_return(
-        double('output', exitstatus: 0, stdout: "Name  Id  Version\n---\n")
+        Puppet::Util::Execution::ProcessOutput.new("Name  Id  Version\n---\n", 0)
       )
       expect(provider.query).to be_nil
     end
