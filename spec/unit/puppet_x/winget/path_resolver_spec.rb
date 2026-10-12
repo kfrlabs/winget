@@ -78,6 +78,29 @@ RSpec.describe PuppetX::Winget::PathResolver do
       end
     end
 
+    context 'when ProgramFiles uses Windows backslashes' do
+      # Regression test: ENV paths come back with backslashes on Windows
+      # (e.g. 'C:\Program Files'). Dir.glob treats backslashes as escapes,
+      # so the resolver must normalize the pattern to forward slashes,
+      # otherwise from_windows_apps silently finds nothing and falls back
+      # to a per-user alias that SYSTEM cannot execute (winget_version nil).
+      before(:each) do
+        ENV['ProgramFiles'] = 'C:\\Program Files'
+        ENV['ProgramW6432'] = 'C:\\Program Files'
+        allow(Dir).to receive(:exist?).and_return(true)
+        allow(Dir).to receive(:glob) do |pattern|
+          expect(pattern).not_to include('\\')
+          ['C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.29.290.0_x64__8wekyb3d8bbwe/winget.exe']
+        end
+      end
+
+      it 'normalizes the glob pattern and resolves the real exe' do
+        expect(described_class.winget_path).to eq(
+          'C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.29.290.0_x64__8wekyb3d8bbwe/winget.exe'
+        )
+      end
+    end
+
     context 'when Dir.glob raises an error' do
       before(:each) do
         allow(Dir).to receive(:exist?).with('C:/Program Files').and_return(true)

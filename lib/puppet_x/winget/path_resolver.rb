@@ -47,11 +47,14 @@ module PuppetX
           program_roots.each do |program_files|
             next unless program_files
 
-            base_dir = File.join(program_files, 'WindowsApps')
+            base_dir = File.join(program_files, 'WindowsApps').tr('\\', '/')
             next unless Dir.exist?(base_dir)
 
-            # Pattern matches both x64 and arm64 variants
-            pattern = File.join(base_dir, 'Microsoft.DesktopAppInstaller_*_*__8wekyb3d8bbwe', 'winget.exe')
+            # Pattern matches both x64 and arm64 variants.
+            # NOTE: Dir.glob treats backslashes as escapes, so the pattern
+            # must use forward slashes even though ENV paths (ProgramFiles)
+            # come back with backslashes on Windows.
+            pattern = "#{base_dir}/Microsoft.DesktopAppInstaller_*_*__8wekyb3d8bbwe/winget.exe"
             begin
               candidates.concat(Dir.glob(pattern))
             rescue StandardError
