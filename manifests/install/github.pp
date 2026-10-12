@@ -46,8 +46,8 @@ define winget::install::github (
 
   if $real_ensure == 'absent' {
     exec { "winget_uninstall_github_${title}":
-      command => "${powershell} -NoProfile -Command \"Get-AppxPackage Microsoft.DesktopAppInstaller | Remove-AppxPackage\"",
-      onlyif  => "${powershell} -NoProfile -Command \"if (Get-AppxPackage Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
+      command => "${powershell} -NoProfile -Command \"Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller | Remove-AppxPackage -AllUsers\"",
+      onlyif  => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
       timeout => 300,
     }
   } else {
@@ -73,7 +73,7 @@ define winget::install::github (
       tries       => $retry_count,
       try_sleep   => $retry_interval,
       environment => $download_env,
-      unless      => "${powershell} -NoProfile -Command \"if (Get-AppxPackage Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
+      unless      => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
     }
   }
 }

@@ -50,8 +50,8 @@ define winget::install::local (
 
   if $real_ensure == 'absent' {
     exec { "winget_uninstall_local_${title}":
-      command => "${powershell} -NoProfile -Command \"Remove-AppxPackage -Package (Get-AppxPackage Microsoft.DesktopAppInstaller).PackageFullName\"",
-      onlyif  => "${powershell} -NoProfile -Command \"if (Get-AppxPackage Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
+      command => "${powershell} -NoProfile -Command \"Remove-AppxPackage -AllUsers -Package (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller).PackageFullName\"",
+      onlyif  => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
       timeout => 300,
     }
   } else {
@@ -59,14 +59,14 @@ define winget::install::local (
     $dependencies.each |$dep| {
       exec { "winget_install_dep_${dep}_${title}":
         command => "${powershell} -NoProfile -Command \"Add-AppxPackage -Path '${dep}'\"",
-        onlyif  => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -Name (Get-AppxPackageManifest -Path '${dep}').Package.PackageIdentity.Name) { exit 0 } else { exit 1 }\"",
+        onlyif  => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers -Name (Get-AppxPackageManifest -Path '${dep}').Package.PackageIdentity.Name) { exit 0 } else { exit 1 }\"",
         timeout => 300,
       }
     }
 
     exec { "winget_install_local_${title}":
       command   => "${powershell} -NoProfile -Command \"Add-AppxPackage -Path '${source_path}'\"",
-      onlyif    => "${powershell} -NoProfile -Command \"if (Get-AppxPackage Microsoft.DesktopAppInstaller) { exit 1 } else { exit 0 }\"",
+      onlyif    => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 1 } else { exit 0 }\"",
       timeout   => 300,
       tries     => 3,
       try_sleep => 10,

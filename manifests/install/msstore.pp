@@ -55,8 +55,8 @@ define winget::install::msstore (
 
   if $real_ensure == 'absent' {
     exec { "winget_uninstall_msstore_${title}":
-      command => "${powershell} -NoProfile -Command \"Get-AppxPackage Microsoft.DesktopAppInstaller | Remove-AppxPackage\"",
-      onlyif  => "${powershell} -NoProfile -Command \"if (Get-AppxPackage Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
+      command => "${powershell} -NoProfile -Command \"Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller | Remove-AppxPackage -AllUsers\"",
+      onlyif  => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
       timeout => 300,
     }
   } else {
@@ -72,7 +72,7 @@ define winget::install::msstore (
       timeout     => 600,
       tries       => $retry_count,
       try_sleep   => $retry_interval,
-      unless      => "${powershell} -NoProfile -Command \"if (Get-AppxPackage Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
+      unless      => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
     }
   }
 }
