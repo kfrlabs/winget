@@ -341,6 +341,17 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       )
       provider.update
     end
+
+    context 'when the package is not installed (0x8A150014)' do
+      it 'falls back to install so ensure => latest works on absent packages' do
+        upgrade_output = Puppet::Util::Execution::ProcessOutput.new(
+          'No installed package found matching input criteria.', 0x8A150014
+        )
+        expect(provider).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git').and_return(upgrade_output)
+        expect(provider).to receive(:install)
+        provider.update
+      end
+    end
   end
 
   describe '#latest' do
@@ -420,6 +431,13 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       let(:code) { 0x8A150006 }
       it 'raises with package name' do
         expect { provider.send(:handle_exit_code, output, 'install') }.to raise_error(Puppet::Error, /not found in winget source/)
+      end
+    end
+
+    context 'with EXIT_NO_INSTALLED_PACKAGE_FOUND (0x8A150014)' do
+      let(:code) { 0x8A150014 }
+      it 'raises a not-installed error instead of a raw exit code' do
+        expect { provider.send(:handle_exit_code, output, 'upgrade') }.to raise_error(Puppet::Error, /is not installed/)
       end
     end
 

@@ -37,6 +37,7 @@ unless defined?(::PuppetX::Winget::Provider::EXIT_SUCCESS)
         EXIT_SOURCE_ERROR = 0x8A150009             # Source error
         EXIT_BLOCKED_BY_POLICY = 0x8A15000A        # Blocked by policy
         EXIT_INSTALLER_FAILED = 0x8A15000B         # Installer failed
+        EXIT_NO_INSTALLED_PACKAGE_FOUND = 0x8A150014 # No installed package found matching input criteria (upgrade of absent package)
 
         # Non-interactive flags per subcommand, verified against
         # https://learn.microsoft.com/en-us/windows/package-manager/winget/.
@@ -245,7 +246,11 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     handle_exit_code(output, 'uninstall')
   end
 
-  # Upgrade a package to latest version
+  # Upgrade a package to latest version.
+  # Puppet calls `update` for `ensure => latest` even when the package is
+  # absent: `winget upgrade` then fails with 0x8A150014 ("No installed
+  # package found matching input criteria"). Fall back to `install` so
+  # `latest` installs a missing package instead of failing.
   def update
     args = ['upgrade', '--id', resource[:name]]
 
@@ -264,7 +269,12 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     end
 
     output = winget_exec(*args)
-    handle_exit_code(output, 'upgrade')
+    if output.exitstatus == PuppetX::Winget::Provider::EXIT_NO_INSTALLED_PACKAGE_FOUND
+      Puppet.debug("winget upgrade found no installed package #{resource[:name]}, falling back to install")
+      install
+    else
+      handle_exit_code(output, 'upgrade')
+    end
   end
 
   # Get the latest available version of a package
@@ -332,6 +342,8 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
       nil
     when PuppetX::Winget::Provider::EXIT_NOT_FOUND
       raise Puppet::Error, _('Package \'%{name}\' not found in winget source') % { name: resource[:name] }
+    when PuppetX::Winget::Provider::EXIT_NO_INSTALLED_PACKAGE_FOUND
+      raise Puppet::Error, _('Package \'%{name}\' is not installed') % { name: resource[:name] }
     when PuppetX::Winget::Provider::EXIT_BLOCKED_BY_POLICY
       raise Puppet::Error, _('winget %{action} blocked by policy: %{output}') % { action: action, output: output }
     when PuppetX::Winget::Provider::EXIT_HASH_MISMATCH
