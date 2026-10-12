@@ -13,6 +13,8 @@
 #
 # @api private
 
+require 'puppet/provider/package'
+
 # winget exit codes (defined once, guarded to avoid redefinition warnings)
 # https://learn.microsoft.com/en-us/windows/package-manager/winget/exit-codes
 # rubocop:disable Style/ClassAndModuleChildren
@@ -38,7 +40,7 @@ unless defined?(::PuppetX::Winget::Provider::EXIT_SUCCESS)
 end
 # rubocop:enable Style/ClassAndModuleChildren
 
-Puppet::Type.type(:package).provide(:winget) do
+Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) do
   desc 'Windows Package Manager (winget) provider for the package type.'
 
   confine operatingsystem: :windows

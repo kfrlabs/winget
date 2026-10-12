@@ -51,17 +51,14 @@ define winget::install::github (
       timeout => 300,
     }
   } else {
-    $os_architecture = $facts['os']['architecture']
-    if $os_architecture == 'arm64' {
-      $architecture = 'arm64'
+    # The GitHub release publishes a single arch-independent bundle
+    # (Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle). An explicit
+    # version (via ensure or version) pins the download URL, otherwise the
+    # latest release is used.
+    if $real_ensure =~ /^\d+(\.\d+)+$/ {
+      $download_url = "https://github.com/microsoft/winget-cli/releases/download/v${real_ensure}/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
     } else {
-      $architecture = 'x64'
-    }
-
-    if $version {
-      $download_url = "https://github.com/microsoft/winget-cli/releases/download/v${version}/Microsoft.WinGet.Client_${version}_${architecture}.msixbundle"
-    } else {
-      $download_url = "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.WinGet.Client_${architecture}.msixbundle"
+      $download_url = 'https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle'
     }
 
     if $proxy {
@@ -71,11 +68,12 @@ define winget::install::github (
     }
 
     exec { "winget_install_github_${title}":
-      command     => "${powershell} -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-WebRequest -UseBasicParsing -Uri '${download_url}' -OutFile '\$env:TEMP/winget.msixbundle'; Add-AppxPackage -Path '\$env:TEMP/winget.msixbundle'\"",
+      command     => "${powershell} -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-WebRequest -UseBasicParsing -Uri '${download_url}' -OutFile (Join-Path \$env:TEMP 'winget.msixbundle'); Add-AppxPackage -Path (Join-Path \$env:TEMP 'winget.msixbundle')\"",
       timeout     => 600,
       tries       => $retry_count,
       try_sleep   => $retry_interval,
       environment => $download_env,
+      unless      => "${powershell} -NoProfile -Command \"if (Get-AppxPackage Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
     }
   }
 }

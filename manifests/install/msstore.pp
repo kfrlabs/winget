@@ -67,7 +67,7 @@ define winget::install::msstore (
     }
 
     exec { "winget_install_msstore_${title}":
-      command     => "${powershell} -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-WebRequest -UseBasicParsing -Uri 'https://aka.ms/getwinget' -OutFile '\$env:TEMP/winget.msixbundle'; Add-AppxPackage -Path '\$env:TEMP/winget.msixbundle'\"",
+      command     => "${powershell} -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-WebRequest -UseBasicParsing -Uri 'https://aka.ms/getwinget' -OutFile (Join-Path \$env:TEMP 'winget.msixbundle'); Add-AppxPackage -Path (Join-Path \$env:TEMP 'winget.msixbundle')\"",
       environment => $download_env,
       timeout     => 600,
       tries       => $retry_count,
