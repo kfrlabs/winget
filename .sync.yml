@@ -1,0 +1,72 @@
+# This file can be used to customize the files managed by PDK.
+#
+# See https://github.com/puppetlabs/pdk-templates/blob/main/README.md
+# for more information.
+#
+# See https://github.com/puppetlabs/pdk-templates/blob/main/config_defaults.yml
+# for the default values.
+---
+.rubocop.yml:
+  Style/Documentation:
+    Exclude:
+      - spec/**/*
+  Style/TrailingCommaInArguments:
+    Exclude:
+      - spec/**/*
+  Style/TrailingCommaInArrayLiteral:
+    Exclude:
+      - spec/**/*
+  RSpec/MessageSpies:
+    EnforcedStyle: receive
+    Exclude:
+      - spec/**/*
+  RSpec/VerifiedDoubles:
+    Enabled: false
+  Style/RegexpLiteral:
+    Exclude:
+      - spec/**/*
+  Layout/IndentationConsistency:
+    Exclude:
+      - spec/**/*
+  RSpec/BeforeAfterAll:
+    Exclude:
+      - spec/**/*
+  RSpec/HookArgument:
+    Exclude:
+      - spec/**/*
+  RSpec/DescribeSymbol:
+    Exclude:
+      - spec/**/*
+  Style/BlockDelimiters:
+    Exclude:
+      - spec/**/*
+  Style/EmptyElse:
+    Exclude:
+      - spec/**/*
+  Style/FormatString:
+    Exclude:
+      - spec/**/*
+  Style/FormatStringToken:
+    Exclude:
+      - spec/**/*
+  Style/Lambda:
+    Exclude:
+      - spec/**/*
+  Style/TernaryParentheses:
+    Exclude:
+      - spec/**/*
+  Style/WordArray:
+    Exclude:
+      - spec/**/*
+  Style/SymbolArray:
+    Exclude:
+      - spec/**/*
+  Style/CollectionMethods:
+    Exclude:
+      - spec/**/*
+  Style/MethodCalledOnDoEndBlock:
+    Exclude:
+      - spec/**/*
+  Style/StringMethods:
+    Exclude:
+      - spec/**/*

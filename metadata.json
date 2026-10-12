@@ -1,0 +1,31 @@
+{
+  "name": "k9fr4n-winget",
+  "version": "0.1.0",
+  "author": "k9fr4n",
+  "summary": "Puppet module for managing Windows packages via winget",
+  "license": "Apache-2.0",
+  "source": "https://github.com/k9fr4n/puppet-winget",
+  "dependencies": [
+
+  ],
+  "operatingsystem_support": [
+    {
+      "operatingsystem": "windows",
+      "operatingsystemrelease": [
+        "2019",
+        "2022",
+        "10",
+        "11"
+      ]
+    }
+  ],
+  "requirements": [
+    {
+      "name": "puppet",
+      "version_requirement": ">= 8.0.0 < 9.0.0"
+    }
+  ],
+  "pdk-version": "3.4.0",
+  "template-url": "pdk-default#3.4.0",
+  "template-ref": "tags/3.4.0-0-gd3cc13f"
+}
