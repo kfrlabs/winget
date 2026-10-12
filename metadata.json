@@ -1,6 +1,6 @@
 {
   "name": "k9fr4n-winget",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "k9fr4n",
   "summary": "Puppet module for managing Windows packages via winget",
   "license": "Apache-2.0",
@@ -14,6 +14,7 @@
       "operatingsystemrelease": [
         "2019",
         "2022",
+        "2025",
         "10",
         "11"
       ]

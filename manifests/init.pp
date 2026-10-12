@@ -82,9 +82,9 @@ class winget (
   # Warn on OS releases outside the supported list (see metadata.json).
   # String comparison only: os.release values are strings in facts.
   $os_major = $facts['os']['release']['major']
-  $supported_releases = ['10', '11', '2019', '2022']
+  $supported_releases = ['10', '11', '2019', '2022', '2025']
   if !($os_major in $supported_releases) {
-    warning('winget requires Windows 10, Windows 11, Windows Server 2019 or Windows Server 2022. Current OS may not be supported.')
+    warning('winget requires Windows 10, Windows 11, Windows Server 2019, Windows Server 2022 or Windows Server 2025. Current OS may not be supported.')
   }
 
   # Backward compatibility: if version is specified, use it for ensure

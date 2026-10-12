@@ -20,7 +20,7 @@ This module provides a `winget` provider for Puppet's built-in `package` type, a
 ## Requirements
 
 - **Puppet**: >= 8.0.0 < 9.0.0 (OpenVox 8 / Puppet 8 compatible)
-- **Operating System**: Windows 10 1809 (build 17763) or later, Windows Server 2019 or later
+- **Operating System**: Windows 10 1809 (build 17763) or later, Windows Server 2019, 2022 or 2025
 - **Architecture**: x64 and arm64 supported
 - **Internet Access**: Required for downloading winget from Microsoft Store or GitHub (unless using `source_path` for offline installation)
 - **Proxy Support**: Configurable via `proxy` parameter
@@ -332,7 +332,7 @@ Set-Acl "C:\Program Files\WindowsApps" $acl
 
 ### Windows Server Support
 
-- Windows Server 2019 and 2022 are supported
+- Windows Server 2019, 2022 and 2025 are supported
 - Windows Server 2016 and earlier are **not supported** (winget requires Windows 10 1809+ / Server 2019+)
 - Some packages may not be available on Server editions
 

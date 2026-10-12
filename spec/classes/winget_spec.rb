@@ -6,7 +6,7 @@ describe 'winget' do
   on_supported_os(
     hardwaremodels: ['x86_64'],
     supported_os: [
-      { 'operatingsystem' => 'windows', 'operatingsystemrelease' => ['10', '11', '2019', '2022'] },
+      { 'operatingsystem' => 'windows', 'operatingsystemrelease' => ['10', '11', '2019', '2022', '2025'] },
     ]
   ).each do |os, os_facts|
     context "on #{os}" do
@@ -145,5 +145,25 @@ describe 'winget' do
 
     it { is_expected.to compile.with_all_deps }
     it { is_expected.to contain_class('winget') }
+  end
+
+  context 'on Windows Server 2025' do
+    # facterdb has no Windows Server 2025 facts yet, so on_supported_os
+    # silently skips it: cover it explicitly with hand-written facts.
+    let(:facts) do
+      {
+        os: {
+          family: 'windows',
+          name: 'windows',
+          release: { major: '2025', full: '2025' },
+          architecture: 'x86_64',
+        },
+      }
+    end
+
+    it { is_expected.to compile.with_all_deps }
+    it { is_expected.to contain_class('winget') }
+    it { is_expected.to contain_winget__install__msstore('winget') }
+    it { is_expected.to contain_winget__install__github('winget_fallback') }
   end
 end
