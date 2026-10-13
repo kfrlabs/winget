@@ -41,7 +41,7 @@ To install a specific version from a local source:
 
   class { 'winget':
     ensure      => '1.8.2391',
-    source_path => 'C:\Sources\Microsoft.WinGet.Client_1.8.2391_x64.appx',
+    source_path => 'C:\Sources\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle',
   }
 
 To guarantee ordering before packages using the winget provider:
@@ -89,13 +89,16 @@ Default value: `undef`
 
 ##### <a name="-winget--source"></a>`source`
 
-Data type: `Enum['msstore', 'github', 'auto']`
+Data type: `Enum['msstore', 'cdn', 'github', 'auto']`
 
-Installation source for winget. Valid values: 'msstore' (Microsoft Store),
-'github' (GitHub releases), or 'auto' (tries msstore first, falls back to
-github). Default: 'auto'. When a specific version is requested via
+Installation source for winget. Valid values: 'cdn' (Microsoft CDN
+distribution of App Installer, preferred), 'github' (GitHub releases),
+or 'auto' (tries cdn first, falls back to github). Default: 'auto'.
+'msstore' is a deprecated alias for 'cdn' (same aka.ms/getwinget
+download, not the Store app): it still works but logs a deprecation
+warning, use 'cdn' instead. When a specific version is requested via
 `ensure`/`version`, `auto` uses `github` directly: the Microsoft CDN
-always serves the latest App Installer, so msstore cannot honor a pin.
+always serves the latest App Installer, so cdn cannot honor a pin.
 
 Default value: `'auto'`
 
@@ -105,9 +108,8 @@ Data type: `Optional[String]`
 
 Local filesystem path to a winget AppX/MSIX bundle file. When specified,
 this takes precedence over `source`: only the local file is installed and
-no `msstore`/`github` download is attempted. Use for offline installation.
-The file must be a valid Microsoft.WinGet.Client or
-Microsoft.DesktopAppInstaller package.
+no `cdn`/`github` download is attempted. Use for offline installation.
+The file must be a valid Microsoft.DesktopAppInstaller package.
 
 Default value: `undef`
 
@@ -404,7 +406,7 @@ The following parameters are available in the `winget::install::local` defined t
 Data type: `String`
 
 Required. Local filesystem path to the winget AppX/MSIX/MSIXBundle file.
-Must be a valid Microsoft.WinGet.Client or Microsoft.DesktopAppInstaller package.
+Must be a valid Microsoft.DesktopAppInstaller package.
 
 ##### <a name="-winget--install--local--ensure"></a>`ensure`
 
@@ -441,6 +443,10 @@ Installs winget from the Microsoft CDN distribution of App Installer
 the Microsoft Store app because it works in the SYSTEM context without the
 Store and without an existing winget CLI, and it accepts the same proxy
 settings as the other install methods.
+
+Backs both `source => 'cdn'` (preferred) and `source => 'msstore'`
+(deprecated alias) of the `winget` class: the download is the Microsoft
+CDN in both cases, never the Store app.
 
 The install runs only when App Installer is absent (presence guard): this
 matters because the bundle version and the inner payload version can differ

@@ -57,18 +57,27 @@ end
 # rubocop:enable Style/ClassAndModuleChildren
 
 Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) do
+  # @api private
   desc 'Windows Package Manager (winget) provider for the package type.'
 
   confine operatingsystem: :windows
 
-  # Not the default provider; explicit opt-in required
-  defaultfor []
+  # Not the default provider; explicit opt-in required.
+  # NOTE: do NOT call `defaultfor []` here. An empty-array argument to
+  # `defaultfor` crashes puppet-strings' YARD provider handler
+  # (NoMethodError: undefined method `[]' for nil:NilClass in
+  # provider_handler.rb#populate_provider_data), because the empty
+  # array literal is parsed with a single nil child, which bypasses
+  # the handler's `kvps.count >= 1` guard. Simply omitting `defaultfor`
+  # already means this provider is never selected by default, so no
+  # call is needed to achieve that behavior.
 
   has_feature :installable, :uninstallable, :upgradeable, :versionable, :install_options, :uninstall_options
 
   # Include exit code constants
   include PuppetX::Winget::Provider
 
+  # @!scope self
   class << self
     # @return [String, nil] Memoized path to winget.exe
     def winget_path
