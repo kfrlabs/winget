@@ -75,10 +75,39 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
       @winget_path ||= resolve_winget_path
     end
 
-    # Reset memoized path (for testing)
+    # Reset memoized state (for testing)
     def reset!
       @winget_path = nil
+      @instances_list = nil
+      @suitability_warned = nil
       PuppetX::Winget::PathResolver.reset!
+    end
+
+    # Clear the class-level `winget list` cache without touching the
+    # memoized path. Called after a successful install/uninstall/upgrade
+    # so the next lookup observes the new state.
+    def clear_list_cache!
+      @instances_list = nil
+    end
+
+    # Prefetch installed packages once for all resources in the catalog.
+    # Puppet calls this hook (when present) with every `package` resource
+    # using this provider before evaluating them individually, so 50
+    # `package` resources share a single `winget list` instead of 50.
+    # Resources keep working without prefetch too: `installed_entry`
+    # falls back to the class-level cache below.
+    # @param resources [Hash] Map of resource name -> resource
+    def prefetch(resources)
+      list = instances_list
+      resources.each do |name, resource|
+        provider = resource.provider
+        next unless provider.is_a?(self)
+
+        key = (name || resource[:name]).to_s.downcase
+        provider.installed_entry = list[key]
+      end
+    rescue StandardError => e
+      Puppet.debug("winget prefetch failed: #{e.message}")
     end
 
     private
@@ -89,16 +118,26 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     end
   end
 
-  # Check if winget is available; called during provider suitability check
+  # Check if winget is available; called during provider suitability check.
+  # The warning is emitted only once per process: Puppet calls this hook
+  # for every resource, which would otherwise flood the log.
   def self.suitable?(*)
     path = winget_path
     if path.nil?
-      Puppet.warning(_('winget provider is unsuitable: winget.exe not found in WindowsApps. Ensure winget is installed and the SYSTEM account can read %ProgramFiles%\\WindowsApps.'))
+      unless @suitability_warned
+        Puppet.warning(_('winget provider is unsuitable: winget.exe not found in WindowsApps. Ensure winget is installed and the SYSTEM account can read %ProgramFiles%\\WindowsApps.'))
+        @suitability_warned = true
+      end
+      Puppet.debug('winget provider is unsuitable: winget.exe not found')
       return false
     end
     true
   rescue StandardError => e
-    Puppet.warning(_('winget provider suitability check failed: %{error}') % { error: e.message })
+    unless @suitability_warned
+      Puppet.warning(_('winget provider suitability check failed: %{error}') % { error: e.message })
+      @suitability_warned = true
+    end
+    Puppet.debug("winget provider suitability check failed: #{e.message}")
     false
   end
 
@@ -193,17 +232,40 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     }
   end
 
-  # Installed package entry from `winget list`, memoized per resource
-  # instance so `query` and `latest` share a single listing. Cleared after
-  # every successful install/uninstall/upgrade (see below).
+  # Installed package entry from `winget list`. Prefetched once per run
+  # via `self.prefetch` (single `winget list` for the whole catalog) and
+  # otherwise served from the class-level `instances_list` cache, so N
+  # `package` resources share one listing instead of running N listings.
+  # A prefetched absent package (nil) is kept as-is and does not re-list.
   # @return [Hash, nil] Package info or nil if not installed
+  attr_writer :installed_entry
+
   def installed_entry
-    @installed_entry ||= self.class.instances_list[resource[:name].downcase]
+    return @installed_entry if defined?(@installed_entry)
+
+    @installed_entry = self.class.instances_list[resource[:name].downcase]
   end
 
-  # Get list of all installed packages via winget list
+  # Drop the per-instance entry so the next lookup re-reads the (cleared)
+  # class-level cache and observes the new state.
+  def clear_installed_entry!
+    remove_instance_variable(:@installed_entry) if defined?(@installed_entry)
+  end
+
+  # Get list of all installed packages via winget list, cached at class
+  # level for the duration of the run. Use `clear_list_cache!` (or
+  # `reset!` in tests) to invalidate.
   # @return [Hash] Map of package id (lowercase) -> package info
   def self.instances_list
+    return @instances_list if defined?(@instances_list) && !@instances_list.nil?
+
+    @instances_list = fetch_instances_list
+  end
+
+  # Single uncached `winget list` run. Never raises: returns {} when
+  # winget is unsuitable or the listing fails.
+  # @return [Hash] Map of package id (lowercase) -> package info
+  def self.fetch_instances_list
     return {} unless suitable?
 
     output = Puppet::Util::Execution.execute([winget_path, 'list', *PuppetX::Winget::Provider::LIST_FLAGS], failonfail: false, combine: true)
@@ -250,7 +312,8 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
     output = winget_exec(*args)
     handle_exit_code(output, 'install')
-    @installed_entry = nil
+    self.class.clear_list_cache!
+    clear_installed_entry!
   end
 
   # Uninstall a package
@@ -263,7 +326,8 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
     output = winget_exec(*args)
     handle_exit_code(output, 'uninstall')
-    @installed_entry = nil
+    self.class.clear_list_cache!
+    clear_installed_entry!
   end
 
   # Upgrade a package to latest version.
@@ -295,7 +359,8 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     else
       handle_exit_code(output, 'upgrade')
     end
-    @installed_entry = nil
+    self.class.clear_list_cache!
+    clear_installed_entry!
   end
 
   # Get the latest available version of a package.

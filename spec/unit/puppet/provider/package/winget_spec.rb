@@ -594,4 +594,89 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       expect(provider.query).to be_nil
     end
   end
+
+  describe '.suitable? warning throttle' do
+    before(:each) do
+      allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(nil)
+    end
+
+    it 'warns only once for repeated unsuitable checks' do
+      expect(Puppet).to receive(:warning).once.with(%r{winget provider is unsuitable})
+      allow(Puppet).to receive(:debug)
+      expect(described_class.suitable?).to be false
+      expect(described_class.suitable?).to be false
+    end
+  end
+
+  describe '.instances_list caching' do
+    let(:winget_path) { 'C:/Path/to/winget.exe' }
+    let(:list_output) do
+      <<~OUTPUT
+        Name                  Id                   Version     Source
+        ----------------------------------------------------------------
+        Git                   Git.Git              2.40.0      winget
+      OUTPUT
+    end
+
+    before(:each) do
+      allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(winget_path)
+      allow(described_class).to receive(:suitable?).and_return(true)
+    end
+
+    it 'runs winget list only once for repeated lookups' do
+      expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
+        Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
+      )
+      described_class.instances_list
+      described_class.instances_list
+    end
+
+    it 're-lists after clear_list_cache!' do
+      expect(Puppet::Util::Execution).to receive(:execute).twice.and_return(
+        Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
+      )
+      described_class.instances_list
+      described_class.clear_list_cache!
+      described_class.instances_list
+    end
+  end
+
+  describe '.prefetch' do
+    let(:winget_path) { 'C:/Path/to/winget.exe' }
+    let(:list_output) do
+      <<~OUTPUT
+        Name                  Id                   Version     Source
+        ----------------------------------------------------------------
+        Git                   Git.Git              2.40.0      winget
+        Foo                   Foo.Foo              1.0.0       winget
+      OUTPUT
+    end
+
+    before(:each) do
+      allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(winget_path)
+      allow(described_class).to receive(:suitable?).and_return(true)
+    end
+
+    it 'shares a single winget list across resources' do
+      expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
+        Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
+      )
+      resource_a = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: :installed, provider: :winget)
+      resource_b = Puppet::Type.type(:package).new(name: 'Foo.Foo', ensure: :installed, provider: :winget)
+      described_class.prefetch('Git.Git' => resource_a, 'Foo.Foo' => resource_b)
+      expect(resource_a.provider.installed_entry[:version]).to eq('2.40.0')
+      expect(resource_b.provider.installed_entry[:version]).to eq('1.0.0')
+      expect(resource_a.provider.query[:ensure]).to eq('2.40.0')
+    end
+
+    it 'caches absent entries without re-listing' do
+      expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
+        Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
+      )
+      missing = Puppet::Type.type(:package).new(name: 'Missing.Missing', ensure: :installed, provider: :winget)
+      described_class.prefetch('Missing.Missing' => missing)
+      expect(missing.provider.installed_entry).to be_nil
+      expect(missing.provider.query).to be_nil
+    end
+  end
 end
