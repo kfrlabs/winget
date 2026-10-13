@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   update, resolved with the shared `PuppetX::Winget::Facts` helper
 
 ### Fixed
+- `winget_upgrades` fact and provider `winget list` parsing slice table
+  columns at the header offsets instead of splitting on whitespace: winget
+  shrinks inter-column gaps to one space for long names (truncated with `…`),
+  which previously produced bogus IDs like `6.0.35` and silently dropped
+  packages from the fact
 - `PuppetX::Winget::Facts` now explicitly requires `puppet_x/winget/path_resolver`,
   so the facts also resolve when the provider was never loaded (e.g. standalone
   `facter` runs)

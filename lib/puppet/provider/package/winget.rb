@@ -126,7 +126,11 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
   # Parse winget list output into a hash of package info
   # winget list output is localized, may have spinners, truncated columns, unicode
-  # We parse the table format, skipping header/separator lines
+  # We parse the table format, skipping header/separator lines.
+  # Columns are sliced at the header offsets (fixed-width table) instead of
+  # split on whitespace: winget shrinks the gap between two columns to a
+  # single space for long names (truncated with `…`), which shifts a
+  # whitespace split and corrupts every field after the name.
   # @param output [String] Raw output from `winget list`
   # @return [Hash{String => Hash}] Map of package id (lowercase) -> { name, version, source, id }
   def parse_winget_list(output)
@@ -139,25 +143,31 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     header_idx = lines.find_index { |line| line.match?(%r{Id.*Version}i) }
     return packages unless header_idx
 
+    header = lines[header_idx]
+    id_start = header.index(%r{\bId\b}i)
+    version_start = header.index(%r{\bVersion\b}i)
+    return packages unless id_start && version_start && version_start > id_start
+
+    source_match = header.match(%r{\S+}, version_start + 'Version'.length)
+    source_start = source_match&.begin(0)
+
     # Data starts after header and separator line
     data_lines = lines[(header_idx + 2)..] || []
 
     data_lines.each do |line|
       # Skip separator lines (--- or ===)
       next if line.match?(%r{^[-=]+\s*$})
+      next if line.length < version_start
 
-      # Parse fixed-width columns: Name | Id | Version | Source
-      # winget list uses variable-width columns; split on 2+ spaces
-      parts = line.split(%r{\s{2,}})
-      next if parts.size < 3
-
-      name = parts[0]&.strip
-      id = parts[1]&.strip
-      version = parts[2]&.strip
-      source = parts[3]&.strip || 'winget'
+      name = line[0...id_start]&.strip
+      id = line[id_start...version_start]&.strip
+      version = source_start ? line[version_start...source_start]&.strip : line[version_start..]&.strip
+      source = source_start ? line[source_start..]&.strip : nil
+      source = 'winget' if source.nil? || source.empty?
 
       next if name.nil? || id.nil? || version.nil?
       next if name.empty? || id.empty? || version.empty?
+      next if id.match?(%r{\s})
 
       packages[id.downcase] = {
         name: name,

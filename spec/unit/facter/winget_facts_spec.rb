@@ -309,5 +309,31 @@ RSpec.describe PuppetX::Winget::Facts do
       OUTPUT
       expect(described_class.parse_winget_upgrade(output)).to eq(['Git.Git'])
     end
+
+    it 'parses real-world output with collapsed single-space gaps' do
+      # winget shrinks inter-column gaps to one space for long names
+      # (truncated with `…`): a whitespace split reads the installed version
+      # as the ID (`6.0.35`) and drops the glued rows.
+      output = <<~OUTPUT
+        Name                                               Id                                Version       Available     Source
+        -----------------------------------------------------------------------------------------------------------------------
+        MariaDB 10.5 (x64)                                 MariaDB.Server                    10.5.9.0      13.0.2.0      winget
+        Microsoft .NET 6.0.35 - Windows Server Hosting     Microsoft.DotNet.HostingBundle.6  6.0.35        6.0.36        winget
+        Microsoft ASP.NET Core 6.0.35 - Shared Framework … Microsoft.DotNet.AspNetCore.6     6.0.35        6.0.36        winget
+        Microsoft Edge WebView2 Runtime                    Microsoft.EdgeWebView2Runtime     154.0.4258.62 155.0.4283.45 winget
+        Microsoft Windows Desktop Runtime - 6.0.35 (x64)   Microsoft.DotNet.DesktopRuntime.6 6.0.35        6.0.36        winget
+        Node.js                                            OpenJS.NodeJS.22                  22.16.0       22.23.2       winget
+        6 upgrades available.
+      OUTPUT
+      expected = [
+        'MariaDB.Server',
+        'Microsoft.DotNet.HostingBundle.6',
+        'Microsoft.DotNet.AspNetCore.6',
+        'Microsoft.EdgeWebView2Runtime',
+        'Microsoft.DotNet.DesktopRuntime.6',
+        'OpenJS.NodeJS.22',
+      ]
+      expect(described_class.parse_winget_upgrade(output)).to eq(expected)
+    end
   end
 end

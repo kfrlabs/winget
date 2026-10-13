@@ -127,10 +127,10 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     context 'with standard output' do
       let(:output) do
         <<~OUTPUT
-          Name                  Id                   Version     Source
-          ----------------------------------------------------------------
-          Git                   Git.Git              2.40.0      winget
-          Visual Studio Code    Microsoft.VisualStudioCode  1.78.0    winget
+          Name                  Id                            Version     Source
+          --------------------------------------------------------------------------------
+          Git                   Git.Git                       2.40.0      winget
+          Visual Studio Code    Microsoft.VisualStudioCode    1.78.0      winget
         OUTPUT
       end
 
@@ -155,9 +155,9 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     context 'with localized header (Id and Version)' do
       let(:output) do
         <<~OUTPUT
-          Nom                 Id                   Version     Source
+          Nom                   Id                   Version     Source
           ----------------------------------------------------------------
-          Git                 Git.Git              2.40.0      winget
+          Git                   Git.Git              2.40.0      winget
         OUTPUT
       end
 
@@ -194,9 +194,9 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     context 'with truncated columns' do
       let(:output) do
         <<~OUTPUT
-          Name                  Id                   Version     Source
-          ----------------------------------------------------------------
-          Very Long Package Name That Gets Truncated  Some.Id   1.0.0     winget
+          Name                                        Id       Version  Source
+          ----------------------------------------------------------------------
+          Very Long Package Name That Gets Truncated  Some.Id  1.0.0    winget
         OUTPUT
       end
 
@@ -218,6 +218,31 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       it 'defaults source to winget' do
         result = provider.parse_winget_list(output)
         expect(result['git.git'][:source]).to eq('winget')
+      end
+    end
+
+    context 'with single-space gaps between columns (long names)' do
+      # winget shrinks inter-column gaps to one space (and truncates names
+      # with `…`); columns stay aligned on the header offsets.
+      let(:output) do
+        <<~OUTPUT
+          Name                                               Id                                Version         Source
+          -----------------------------------------------------------------------------------------------------------------------
+          MariaDB 10.5 (x64)                                 MariaDB.Server                    10.5.9.0        winget
+          Microsoft ASP.NET Core 6.0.35 - Shared Framework … Microsoft.DotNet.AspNetCore.6     6.0.35          winget
+          Microsoft Windows Desktop Runtime - 6.0.35 (x64)   Microsoft.DotNet.DesktopRuntime.6 6.0.35          winget
+        OUTPUT
+      end
+
+      it 'reads IDs at the header offsets instead of shifting columns' do
+        result = provider.parse_winget_list(output)
+        expect(result.keys).to contain_exactly(
+          'mariadb.server',
+          'microsoft.dotnet.aspnetcore.6',
+          'microsoft.dotnet.desktopruntime.6',
+        )
+        expect(result['microsoft.dotnet.aspnetcore.6'][:version]).to eq('6.0.35')
+        expect(result['microsoft.dotnet.desktopruntime.6'][:version]).to eq('6.0.35')
       end
     end
   end
@@ -412,7 +437,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     context 'when query and latest run on the same resource' do
       it 'lists installed packages only once' do
         allow(Puppet::Util::Execution).to receive(:execute).and_return(
-          Puppet::Util::Execution::ProcessOutput.new("Name  Id  Version\n---\nGit  Git.Git  2.40.0", 0),
+          Puppet::Util::Execution::ProcessOutput.new("Name     Id       Version\n-------------------------\nGit      Git.Git  2.40.0", 0),
         )
         expect(described_class).to receive(:instances_list).once.and_call_original
         provider.query
@@ -532,7 +557,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     it 'returns provider instances for each installed package' do
       allow(Puppet::Util::Execution).to receive(:execute).and_return(
-        Puppet::Util::Execution::ProcessOutput.new("Name  Id  Version\n---\nGit  Git.Git  2.40.0", 0)
+        Puppet::Util::Execution::ProcessOutput.new("Name     Id       Version\n-------------------------\nGit      Git.Git  2.40.0", 0),
       )
       instances = described_class.instances
       expect(instances.size).to eq(1)
@@ -556,7 +581,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     it 'returns current package state when installed' do
       allow(Puppet::Util::Execution).to receive(:execute).and_return(
-        Puppet::Util::Execution::ProcessOutput.new("Name  Id  Version\n---\nGit  Git.Git  2.40.0", 0)
+        Puppet::Util::Execution::ProcessOutput.new("Name     Id       Version\n-------------------------\nGit      Git.Git  2.40.0", 0),
       )
       result = provider.query
       expect(result).to eq({ name: 'Git.Git', ensure: '2.40.0', provider: :winget })
@@ -564,7 +589,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     it 'returns nil when not installed' do
       allow(Puppet::Util::Execution).to receive(:execute).and_return(
-        Puppet::Util::Execution::ProcessOutput.new("Name  Id  Version\n---\n", 0)
+        Puppet::Util::Execution::ProcessOutput.new("Name     Id       Version\n-------------------------", 0),
       )
       expect(provider.query).to be_nil
     end

@@ -56,10 +56,14 @@ module PuppetX
         end
 
         # Parse `winget upgrade` table output into package IDs.
-        # Same table layout as `winget list` plus an `Available` column; the
-        # header match is language-agnostic (Nom/Disponible on French systems).
-        # Footers (e.g. "3 upgrades available.") contain spaces and are skipped:
-        # package IDs never contain spaces.
+        # Columns are sliced at the header offsets (fixed-width table) instead
+        # of split on whitespace: winget shrinks the gap between two columns
+        # to a single space for long names (truncated with `…`), so a
+        # whitespace split shifts every column (the installed version is then
+        # read as the ID) or glues ID and version together (package skipped).
+        # The header match stays language-agnostic (Nom / Disponible on French
+        # systems). Rows shorter than the Version column (e.g. the "N upgrades
+        # available." footer) are skipped: package IDs never contain spaces.
         # @param output [String, nil] Raw output from `winget upgrade`
         # @return [Array<String>] Deduplicated package IDs
         def parse_winget_upgrade(output)
@@ -71,14 +75,15 @@ module PuppetX
           header_idx = lines.find_index { |line| line.match?(%r{Id.*Version}i) }
           return ids unless header_idx
 
+          id_start, version_start = column_offsets(lines[header_idx])
+          return ids unless id_start && version_start
+
           data_lines = lines[(header_idx + 2)..] || []
           data_lines.each do |line|
             next if line.match?(%r{^[-=]+\s*$})
+            next if line.length < version_start
 
-            parts = line.split(%r{\s{2,}})
-            next if parts.size < 2
-
-            id = parts[1]&.strip
+            id = line[id_start...version_start]&.strip
             next if id.nil? || id.empty?
             next if id.match?(%r{\s})
 
@@ -86,6 +91,17 @@ module PuppetX
           end
 
           ids
+        end
+
+        # Locate the Id and Version column starts in a winget table header.
+        # @param header [String] Header line containing `Id` and `Version`
+        # @return [Array<(Integer, nil)>] Id/Version offsets, nils when absent
+        def column_offsets(header)
+          id_start = header.index(%r{\bId\b}i)
+          version_start = header.index(%r{\bVersion\b}i)
+          return [nil, nil] unless id_start && version_start && version_start > id_start
+
+          [id_start, version_start]
         end
       end
     end
