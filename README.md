@@ -1,5 +1,12 @@
 # winget
 
+[![CI](https://github.com/kfrlabs/winget/actions/workflows/ci.yml/badge.svg)](https://github.com/kfrlabs/winget/actions/workflows/ci.yml)
+[![Release to the Puppet Forge](https://github.com/kfrlabs/winget/actions/workflows/release.yml/badge.svg)](https://github.com/kfrlabs/winget/actions/workflows/release.yml)
+[![Puppet Forge version](https://img.shields.io/puppetforge/v/kfrlabs/winget.svg)](https://forge.puppet.com/modules/kfrlabs/winget)
+[![Puppet Forge downloads](https://img.shields.io/puppetforge/dt/kfrlabs/winget.svg)](https://forge.puppet.com/modules/kfrlabs/winget)
+[![License: Apache-2.0](https://img.shields.io/github/license/kfrlabs/winget.svg)](LICENSE)
+[![Puppet >= 7.0, < 9.0](https://img.shields.io/badge/puppet-%3E%3D7.0_%3C9.0-blue.svg)](metadata.json)
+
 Puppet module for managing Windows packages via winget (Windows Package Manager).
 
 ## Table of Contents

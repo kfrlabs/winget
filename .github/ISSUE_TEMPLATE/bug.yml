@@ -1,0 +1,44 @@
+name: Bug report
+description: Report a reproducible problem with this module
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Module version
+      placeholder: e.g. 0.2.1
+    validations:
+      required: true
+  - type: input
+    id: puppet
+    attributes:
+      label: Puppet version
+      placeholder: e.g. Puppet 8.5 / OpenVox 8
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: e.g. Windows Server 2022, Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal manifest and steps to reproduce the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Puppet run output with --debug if possible.

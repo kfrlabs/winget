@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-13
+
 ### Added
 - Class `winget::upgrade`: declares one `package` with `ensure => latest`
   (winget provider) per ID from the new `winget_upgrades` fact, with `exclude` /
