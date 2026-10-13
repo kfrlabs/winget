@@ -22,7 +22,7 @@
 #
 #   class { 'winget':
 #     ensure      => '1.8.2391',
-#     source_path => 'C:\Sources\Microsoft.WinGet.Client_1.8.2391_x64.appx',
+#     source_path => 'C:\Sources\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle',
 #   }
 #
 # To guarantee ordering before packages using the winget provider:
@@ -40,18 +40,20 @@
 #   This parameter is kept for backward compatibility.
 #
 # @param source
-#   Installation source for winget. Valid values: 'msstore' (Microsoft Store),
-#   'github' (GitHub releases), or 'auto' (tries msstore first, falls back to
-#   github). Default: 'auto'. When a specific version is requested via
+#   Installation source for winget. Valid values: 'cdn' (Microsoft CDN
+#   distribution of App Installer, preferred), 'github' (GitHub releases),
+#   or 'auto' (tries cdn first, falls back to github). Default: 'auto'.
+#   'msstore' is a deprecated alias for 'cdn' (same aka.ms/getwinget
+#   download, not the Store app): it still works but logs a deprecation
+#   warning, use 'cdn' instead. When a specific version is requested via
 #   `ensure`/`version`, `auto` uses `github` directly: the Microsoft CDN
-#   always serves the latest App Installer, so msstore cannot honor a pin.
+#   always serves the latest App Installer, so cdn cannot honor a pin.
 #
 # @param source_path
 #   Local filesystem path to a winget AppX/MSIX bundle file. When specified,
 #   this takes precedence over `source`: only the local file is installed and
-#   no `msstore`/`github` download is attempted. Use for offline installation.
-#   The file must be a valid Microsoft.WinGet.Client or
-#   Microsoft.DesktopAppInstaller package.
+#   no `cdn`/`github` download is attempted. Use for offline installation.
+#   The file must be a valid Microsoft.DesktopAppInstaller package.
 #
 # @param dependencies
 #   Array of local AppX/MSIX files installed before the `source_path` bundle
@@ -78,7 +80,7 @@
 class winget (
   String $ensure                    = 'present',
   Optional[String] $version         = undef,
-  Enum['msstore', 'github', 'auto'] $source = 'auto',
+  Enum['msstore', 'cdn', 'github', 'auto'] $source = 'auto',
   Optional[String] $source_path     = undef,
   Array[String] $dependencies       = [],
   Optional[String] $proxy           = undef,
@@ -122,7 +124,7 @@ class winget (
         fail('winget: dependencies requires source_path to be set.')
       }
       # If source_path is provided, only the local file is installed: it
-      # takes precedence over `source`, so no msstore/github download is
+      # takes precedence over `source`, so no cdn/github download is
       # attempted and the two installations cannot race each other.
       if $source_path {
         winget::install::local { 'winget_local':
@@ -131,9 +133,14 @@ class winget (
           dependencies => $dependencies,
         }
       } else {
+        # `cdn` is the preferred name; `msstore` is a deprecated alias for
+        # the same aka.ms/getwinget download (not the Store app).
+        if $source == 'msstore' {
+          warning("winget: source 'msstore' is deprecated, use source => 'cdn' instead (same Microsoft CDN download).")
+        }
         # Install winget using the selected source
         case $source {
-          'msstore': {
+          'msstore', 'cdn': {
             winget::install::msstore { 'winget':
               ensure                   => $real_ensure,
               accept_source_agreements => $accept_source_agreements,
@@ -147,7 +154,7 @@ class winget (
             }
           }
           'auto': {
-            # The msstore CDN always serves the latest App Installer and
+            # The cdn always serves the latest App Installer and
             # cannot honor a version pin: with a pinned version, go straight
             # to github so `ensure => '1.8.2391'` actually converges.
             if $real_ensure =~ /^\d+(\.\d+)+$/ {
@@ -156,12 +163,12 @@ class winget (
                 proxy  => $proxy,
               }
             } else {
-              # msstore first, github as independent fallback (no chaining
-              # arrow: with `->`, a failed msstore exec would skip the
+              # cdn first, github as independent fallback (no chaining
+              # arrow: with `->`, a failed cdn exec would skip the
               # fallback, and a successful one would make it a no-op, so the
               # fallback would never run). Both execs carry an `unless`
-              # presence guard; the catalog applies msstore first, and the
-              # fallback still runs when msstore fails.
+              # presence guard; the catalog applies cdn first, and the
+              # fallback still runs when cdn fails.
               winget::install::msstore { 'winget':
                 ensure                   => $real_ensure,
                 accept_source_agreements => $accept_source_agreements,
@@ -174,7 +181,7 @@ class winget (
             }
           }
           default: {
-            fail("Invalid source '${source}'. Valid values: 'msstore', 'github', 'auto'")
+            fail("Invalid source '${source}'. Valid values: 'cdn', 'github', 'auto' ('msstore' is a deprecated alias for 'cdn')")
           }
         }
       }

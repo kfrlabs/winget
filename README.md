@@ -22,11 +22,11 @@ Puppet module for managing Windows packages via winget (Windows Package Manager)
 
 ## Description
 
-This module provides a `winget` provider for Puppet's built-in `package` type, allowing you to manage Windows packages using the Windows Package Manager (winget). It also includes a `winget` class to bootstrap winget on systems where it is not pre-installed, and custom facts `winget_path` and `winget_version` for inventory and conditional logic.
+This module provides a `winget` provider for Puppet's built-in `package` type, allowing you to manage Windows packages using the Windows Package Manager (winget). It also includes a `winget` class to bootstrap winget on systems where it is not pre-installed, a `winget::upgrade` class for bulk upgrades, and custom facts `winget_path`, `winget_version` and `winget_upgrades` for inventory and conditional logic.
 
 ## Requirements
 
-- **Puppet**: >= 8.0.0 < 9.0.0 (OpenVox 8 / Puppet 8 compatible)
+- **Puppet**: >= 7.0.0 < 9.0.0 (Puppet 7/8, OpenVox 8 compatible)
 - **Operating System**: Windows 10 1809 (build 17763) or later, Windows Server 2019, 2022 or 2025
 - **Architecture**: x64 and arm64 supported
 - **Internet Access**: Required for downloading winget from Microsoft Store or GitHub (unless using `source_path` for offline installation)
@@ -159,6 +159,10 @@ redeclaring it would fail with a duplicate-declaration error. Declare
 
 #### Microsoft Store Source
 
+> Note: `--source msstore` here is the winget CLI package source (passed
+> through to `winget install`), not the bootstrap `source` parameter
+> (`cdn`/`github`/`auto`).
+
 ```puppet
 package { '9NBLGGH4VVD1':  # Example Store app ID
   ensure          => installed,
@@ -207,25 +211,27 @@ alias is unavailable in the agent/SYSTEM context anyway. Instead, all install
 methods download (or accept) a real App Installer package and install it with
 `Add-AppxPackage` through the fully qualified PowerShell executable:
 
-- `msstore` downloads the Microsoft CDN distribution of App Installer
+- `cdn` downloads the Microsoft CDN distribution of App Installer
   (`https://aka.ms/getwinget`, a `.msixbundle`). This is the documented
   Microsoft download channel for App Installer, and unlike the Store app it
   works headless under SYSTEM with no Store dependency and no winget CLI.
-  It always installs the latest published build; pin a version with one of
-  the methods below instead. The install only runs when App Installer is
+  (`source => 'msstore'` is a deprecated alias for `cdn`: same download,
+  logs a deprecation warning.) The `cdn` method always installs the latest
+  published build; pin a version with one of the methods below instead.
+  The install only runs when App Installer is
   absent: the bundle version and the inner payload version can differ, and
   Windows refuses downgrades (`0x80073D19`), so reinstalling over a newer
   build would fail.
-- `github` downloads a versioned `Microsoft.WinGet.Client` bundle from the
+- `github` downloads a versioned `Microsoft.DesktopAppInstaller` bundle from the
   `microsoft/winget-cli` GitHub releases. This is the recommended method for
   pinning an exact winget version.
 - `local` installs a caller-supplied AppX/MSIX/MSIXBundle file (plus optional
   dependency packages) for fully offline environments.
-- `auto` (the default) tries the `msstore` method first, then the `github`
+- `auto` (the default) tries the `cdn` method first, then the `github`
   method as an independent fallback: the fallback has no ordering
-  dependency on `msstore`, so it still runs when the `msstore` install
+  dependency on `cdn`, so it still runs when the `cdn` install
   fails. When a specific version is requested (`ensure => '1.8.2391'`),
-  `auto` uses `github` directly, because the `msstore` CDN always serves
+  `auto` uses `github` directly, because the `cdn` download always serves
   the latest build and cannot honor a pin.
 
 #### Minimal Bootstrap
@@ -234,15 +240,16 @@ methods download (or accept) a real App Installer package and install it with
 include winget
 ```
 
-#### Specific Version from Microsoft Store
+#### Latest from Microsoft CDN
 
-> Note: the `msstore` method always installs the latest published build.
+> Note: the `cdn` method always installs the latest published build.
 > To pin an exact version, use `source => 'github'` or `source_path`.
+> (`source => 'msstore'` is a deprecated alias for `cdn`.)
 
 ```puppet
 class { 'winget':
   ensure => 'present',
-  source => 'msstore',
+  source => 'cdn',
 }
 ```
 
@@ -260,7 +267,7 @@ class { 'winget':
 ```puppet
 class { 'winget':
   ensure       => '1.8.2391',
-  source_path  => 'C:/Sources/Microsoft.WinGet.Client_1.8.2391_x64.msixbundle',
+  source_path  => 'C:/Sources/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle',
 }
 ```
 
@@ -343,11 +350,22 @@ generated with `pdk bundle exec puppet strings generate --format markdown`.
 Main class for bootstrapping winget. See [Bootstrap Class Examples](#bootstrap-class-examples)
 and [REFERENCE.md](REFERENCE.md#winget).
 
+`source` accepts `'cdn'` (Microsoft CDN, preferred), `'github'`, `'auto'`
+(default) and `'msstore'` (deprecated alias for `'cdn'`).
+
+#### `winget::upgrade`
+
+Declares one `package` with `ensure => latest` per ID from the
+`winget_upgrades` fact. See [Bulk Upgrade](#bulk-upgrade-all-packages-with-available-updates)
+and [REFERENCE.md](REFERENCE.md#winget--upgrade).
+
 ### Defined Types
 
 #### `winget::install::msstore`
 
-Installs winget from Microsoft Store.
+Installs winget from the Microsoft CDN (`https://aka.ms/getwinget`).
+Backs both `source => 'cdn'` (preferred) and the deprecated
+`source => 'msstore'` alias: never the Store app.
 
 #### `winget::install::github`
 
@@ -388,6 +406,13 @@ Description: Absolute path to winget.exe, or nil if not found.
 Type: String or nil
 Description: Version of winget (e.g., `1.8.2391`), or nil if not found.
 
+#### `winget_upgrades`
+
+Type: Array of String
+Description: Winget package IDs with an available upgrade (e.g.,
+`['Git.Git']`), or `[]` when winget is absent or the query fails. Read by
+`Class['winget::upgrade']`.
+
 ## Limitations
 
 ### SYSTEM Context and WindowsApps ACL
@@ -416,12 +441,12 @@ By default, the bootstrap class accepts source agreements automatically (`accept
 
 ### Offline Installation
 
-Offline installation via `source_path` requires a valid Microsoft.WinGet.Client or Microsoft.DesktopAppInstaller `.appx`, `.msix`, `.msixbundle`, or `.appxbundle` file with all dependencies. Dependency files must be provided separately via the `dependencies` parameter. When `source_path` is set it takes precedence: only the local file is installed and no `msstore`/`github` download is attempted.
+Offline installation via `source_path` requires a valid Microsoft.DesktopAppInstaller `.appx`, `.msix`, `.msixbundle`, or `.appxbundle` file with all dependencies. Dependency files must be provided separately via the `dependencies` parameter. When `source_path` is set it takes precedence: only the local file is installed and no `cdn`/`github` download is attempted.
 
 ```puppet
 class { 'winget':
   ensure       => '1.8.2391',
-  source_path  => 'C:/Sources/Microsoft.WinGet.Client_1.8.2391_x64.msixbundle',
+  source_path  => 'C:/Sources/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle',
   dependencies => ['C:/Sources/Microsoft.VCLibs.x64.appx'],
 }
 ```
