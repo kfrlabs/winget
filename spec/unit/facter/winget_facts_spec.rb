@@ -278,6 +278,39 @@ RSpec.describe PuppetX::Winget::Facts do
         expect(described_class.winget_upgrades(winget_exe)).to eq(['Git.Git', 'Notepad++.Notepad++'])
       end
     end
+
+    context 'when WINGET_UPGRADES_ENABLED disables the fact' do
+      before(:each) do
+        allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return('false')
+        allow(File).to receive(:exist?).with(winget_exe).and_return(true)
+      end
+
+      it 'returns [] without shelling out' do
+        expect(Puppet::Util::Execution).not_to receive(:execute)
+        expect(described_class.winget_upgrades(winget_exe)).to eq([])
+      end
+    end
+  end
+
+  describe '.upgrades_enabled?' do
+    it 'is enabled by default' do
+      allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return(nil)
+      expect(described_class.upgrades_enabled?).to be true
+    end
+
+    it 'treats false-like values as disabled' do
+      %w[false 0 no off FALSE No OFF].each do |value|
+        allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return(value)
+        expect(described_class.upgrades_enabled?).to be(false), "expected #{value.inspect} to disable the fact"
+      end
+    end
+
+    it 'treats other values as enabled' do
+      %w[true 1 yes].each do |value|
+        allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return(value)
+        expect(described_class.upgrades_enabled?).to be(true), "expected #{value.inspect} to keep the fact enabled"
+      end
+    end
   end
 
   describe '.parse_winget_upgrade' do

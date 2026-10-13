@@ -137,7 +137,19 @@ class { 'winget::upgrade':
 
 Note: the `winget_upgrades` fact runs `winget upgrade` once per agent run
 even when the packages are skipped by the schedule; the schedule only skips
-the `package` resources outside the window.
+the `package` resources outside the window. When upgrades are confined to a
+maintenance window, cache the fact with a TTL in `facter.conf` so the cost
+is paid at most once per window:
+
+```ini
+facts : {
+  ttls : [ { "winget_upgrades" : "7 days" } ]
+}
+```
+
+Or opt out entirely with the `WINGET_UPGRADES_ENABLED=false` environment
+variable (or `facts : { blocklist : [ "winget_upgrades" ] }`): the fact then
+returns `[]` without shelling out.
 
 A package already declared elsewhere in the catalog (e.g. `package {
 'Git.Git': ensure => present }`) is left alone by `winget::upgrade`:

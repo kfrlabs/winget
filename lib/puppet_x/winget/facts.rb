@@ -9,7 +9,10 @@ require 'puppet_x/winget/path_resolver'
 # Facter confine context. Helpers never raise: they return nil/[] when winget
 # is absent or when any error occurs. Note `winget_upgrades` shells out to
 # `winget upgrade` (source round-trips, a few seconds) while the other two
-# are fast.
+# are fast. To avoid paying that cost on every agent run, either cache the
+# fact with a TTL in facter.conf (`facts: { ttls: [{ winget_upgrades:
+# "1 day" }] }`) or opt out entirely with
+# `WINGET_UPGRADES_ENABLED=false` (then `winget::upgrade` sees []).
 # rubocop:disable Style/ClassAndModuleChildren
 module PuppetX
   module Winget
@@ -39,9 +42,25 @@ module PuppetX
           nil
         end
 
+        # Whether the expensive `winget_upgrades` fact may run.
+        # Opt out by setting `WINGET_UPGRADES_ENABLED` to a false-like
+        # value (`false`, `0`, `no`, `off`). Anything else (including
+        # unset) keeps the fact enabled for backward compatibility.
+        # @return [Boolean] False when the fact must return [] without shelling out
+        def upgrades_enabled?
+          value = ENV.fetch('WINGET_UPGRADES_ENABLED', nil)
+          return true if value.nil?
+
+          !value.strip.match?(%r{\A(false|0|no|off)\z}i)
+        rescue StandardError
+          true
+        end
+
         # @param path [String, nil] Optional override for the winget path (testing)
-        # @return [Array<String>] Package IDs with an available upgrade ([] when absent/error)
+        # @return [Array<String>] Package IDs with an available upgrade ([] when absent/error/disabled)
         def winget_upgrades(path = nil)
+          return [] unless upgrades_enabled?
+
           winget = path || winget_path
           return [] unless winget && File.exist?(winget)
 

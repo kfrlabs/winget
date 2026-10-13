@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Provider `self.prefetch(resources)` with a class-level `winget list`
+  cache: N `package` resources now share a single listing instead of one
+  listing per resource (use `clear_list_cache!` / `reset!` to invalidate)
+- `winget_upgrades` fact opt-out via `WINGET_UPGRADES_ENABLED=false`
+  (returns `[]` without shelling out); facter.conf TTL caching documented
+  (`facts: { ttls: [{ "winget_upgrades": "7 days" }] }`) for
+  schedule-window setups
+
 ### Fixed
+- `suitable?` warning throttle: the unsuitable/missing-winget warning is
+  emitted only once per process (further checks use `Puppet.debug`),
+  instead of once per resource
 - `source => 'auto'` fallback: the `github` fallback is no longer chained
   after `msstore` with `->`, so it still runs when the `msstore` install
   fails (previously it never ran: skipped on failure, no-op on success)

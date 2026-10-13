@@ -18,7 +18,11 @@
 # The fact runs `winget upgrade` once per agent run (source round-trips, a few
 # seconds) even when the packages are skipped by a `schedule` metaparameter:
 # the schedule only skips the `package` resources outside the window, it does
-# not skip the fact.
+# not skip the fact. When upgrades are confined to a maintenance window,
+# cache the fact with a TTL in facter.conf so the cost is paid at most once
+# per window (`facts: { ttls: [{ "winget_upgrades": "7 days" }] }`), or opt
+# out entirely with `WINGET_UPGRADES_ENABLED=false` (the fact then returns
+# `[]` without shelling out).
 #
 # Ordering with the bootstrap class is done at the call site:
 #
