@@ -57,6 +57,7 @@ end
 # rubocop:enable Style/ClassAndModuleChildren
 
 Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) do
+  # @api private
   desc 'Windows Package Manager (winget) provider for the package type.'
 
   confine operatingsystem: :windows
@@ -69,6 +70,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   # Include exit code constants
   include PuppetX::Winget::Provider
 
+  # @!scope self
   class << self
     # @return [String, nil] Memoized path to winget.exe
     def winget_path
