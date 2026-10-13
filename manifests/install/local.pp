@@ -13,7 +13,7 @@
 #
 # @param source_path
 #   Required. Local filesystem path to the winget AppX/MSIX/MSIXBundle file.
-#   Must be a valid Microsoft.WinGet.Client or Microsoft.DesktopAppInstaller package.
+#   Must be a valid Microsoft.DesktopAppInstaller package.
 #
 # @param ensure
 #   Desired state: 'present', 'absent', or a specific version string.

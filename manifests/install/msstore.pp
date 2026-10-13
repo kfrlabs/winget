@@ -8,6 +8,10 @@
 # Store and without an existing winget CLI, and it accepts the same proxy
 # settings as the other install methods.
 #
+# Backs both `source => 'cdn'` (preferred) and `source => 'msstore'`
+# (deprecated alias) of the `winget` class: the download is the Microsoft
+# CDN in both cases, never the Store app.
+#
 # The install runs only when App Installer is absent (presence guard): this
 # matters because the bundle version and the inner payload version can differ
 # (e.g. bundle 2026.728.x carrying a 1.29.290 payload), and Windows refuses
@@ -77,7 +81,7 @@ define winget::install::msstore (
     # version-based guard would reinstall latest on every run when a version
     # is pinned, and could never converge.
     if $real_ensure =~ /^\d+(\.\d+)+$/ {
-      warning("winget::install::msstore[${title}]: ensure '${real_ensure}' pins a version, but the msstore source always installs the latest App Installer. Use source => 'github' or source_path to pin a version.")
+      warning("winget::install::msstore[${title}]: ensure '${real_ensure}' pins a version, but the cdn source always installs the latest App Installer. Use source => 'github' or source_path to pin a version.")
     }
 
     # `Add-AppxPackage` is flaky under the SYSTEM account and the aka.ms

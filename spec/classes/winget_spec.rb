@@ -57,8 +57,16 @@ describe 'winget' do
         end
       end
 
-      context 'with source => msstore' do
+      context 'with source => msstore (deprecated alias for cdn)' do
         let(:params) { { source: 'msstore' } }
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_winget__install__msstore('winget') }
+        it { is_expected.not_to contain_winget__install__github('winget') }
+      end
+
+      context 'with source => cdn' do
+        let(:params) { { source: 'cdn' } }
 
         it { is_expected.to compile.with_all_deps }
         it { is_expected.to contain_winget__install__msstore('winget') }
