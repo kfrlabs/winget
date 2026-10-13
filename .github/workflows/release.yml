@@ -1,0 +1,111 @@
+# Release pipeline: tag vX.Y.Z -> checks -> Forge publish -> GitHub Release.
+name: Release to the Puppet Forge
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Lint and unit tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PUPPET_GEM_VERSION: '~> 8.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+      - name: Syntax, lint, metadata, rubocop
+        run: bundle exec rake syntax lint metadata_lint rubocop
+      - name: Unit tests
+        run: bundle exec rake parallel_spec
+
+  release:
+    name: Build, publish and release
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PUPPET_GEM_VERSION: '~> 8.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+      - name: Tag must match metadata.json version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          metadata_version="$(ruby -rjson -e "puts JSON.parse(File.read('metadata.json'))['version']")"
+          if [ "$tag_version" != "$metadata_version" ]; then
+            echo "::error::Tag v${tag_version} does not match metadata.json version ${metadata_version}."
+            exit 1
+          fi
+          echo "Releasing version ${tag_version}."
+      - name: Install PDK
+        run: |
+          wget -q "https://apt.puppet.com/puppet-tools-release-$(lsb_release -cs).deb"
+          sudo dpkg -i "puppet-tools-release-$(lsb_release -cs).deb"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pdk
+      - name: Build the module package
+        run: pdk build --force
+      - name: Publish to the Puppet Forge
+        env:
+          PUPPET_FORGE_API_KEY: ${{ secrets.PUPPET_FORGE_API_KEY }}
+        run: |
+          if [ -z "${PUPPET_FORGE_API_KEY}" ]; then
+            echo '::error::Missing PUPPET_FORGE_API_KEY secret.'
+            exit 1
+          fi
+          archive="$(ls pkg/*.tar.gz | head -n 1)"
+          echo "Uploading ${archive} to the Forge."
+          http_code="$(curl -sS -o /tmp/forge_response.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${PUPPET_FORGE_API_KEY}" \
+            -F "file=@${archive}" \
+            https://forgeapi.puppet.com/v3/releases)"
+          cat /tmp/forge_response.json
+          echo
+          case "${http_code}" in
+            200|201) echo 'Forge upload accepted.' ;;
+            *) echo "::error::Forge upload failed (HTTP ${http_code})."; exit 1 ;;
+          esac
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python3 - "$version" <<'EOF'
+          import re, sys
+          version = sys.argv[1]
+          text = open('CHANGELOG.md', encoding='utf-8').read()
+          pattern = re.compile(
+              r'^## \[' + re.escape(version) + r'\][^\n]*\n(.*?)(?=^## \[|\Z)',
+              re.M | re.S,
+          )
+          match = pattern.search(text)
+          if not match or not match.group(1).strip():
+              print(f'::error::No CHANGELOG entry found for version {version}.')
+              sys.exit(1)
+          open('/tmp/release_notes.md', 'w', encoding='utf-8').write(match.group(1).strip() + '\n')
+          EOF
+          cat /tmp/release_notes.md
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: pkg/*.tar.gz
+          body_path: /tmp/release_notes.md
+          generate_release_notes: false

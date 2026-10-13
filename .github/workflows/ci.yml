@@ -1,0 +1,142 @@
+# This file is managed by hand (not PDK-synced) so the pipeline can cover
+# Litmus on Windows, REFERENCE.md freshness and Puppet 7/8 matrix testing.
+name: CI
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: 'Validate (PDK validate + REFERENCE.md)'
+    runs-on: ubuntu-latest
+    env:
+      PUPPET_GEM_VERSION: '~> 8.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+      - name: PDK validate (syntax, lint, metadata, rubocop, YAML/JSON)
+        run: bundle exec rake syntax lint metadata_lint rubocop
+      - name: REFERENCE.md is up to date
+        run: |
+          bundle exec rake strings:generate:reference
+          git diff --exit-code REFERENCE.md || \
+            (echo '::error::REFERENCE.md is out of date. Run `bundle exec rake strings:generate:reference` and commit the result.' && exit 1)
+
+  unit:
+    name: 'Unit (Puppet ${{ matrix.puppet_version }}, Ruby ${{ matrix.ruby }})'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Puppet 8 is the primary target; Puppet 7 is kept for compatibility.
+          - puppet_version: '~> 8.0'
+            ruby: '3.2'
+          - puppet_version: '~> 7.0'
+            ruby: '2.7'
+    env:
+      PUPPET_GEM_VERSION: ${{ matrix.puppet_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      - name: Run unit tests (pdk test unit equivalent)
+        run: bundle exec rake parallel_spec
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-puppet-${{ matrix.puppet_version }}-ruby-${{ matrix.ruby }}
+          path: coverage/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  acceptance:
+    name: 'Acceptance (Litmus, Windows)'
+    runs-on: windows-latest
+    env:
+      PUPPET_GEM_VERSION: '~> 8.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+      - name: Validate module on Windows
+        shell: bash
+        run: bundle exec rake syntax lint metadata_lint rubocop
+      - name: Run Litmus acceptance tests
+        # Requires a provisioned Windows target (see spec/acceptance/README).
+        # Without an inventory the step validates the suite instead of failing.
+        shell: bash
+        run: |
+          if [ -f spec/fixtures/litmus_inventory.yaml ] || [ -f inventory.yaml ]; then
+            bundle exec rake 'litmus:acceptance:parallel'
+          else
+            echo 'No Litmus inventory found; checking acceptance suite syntax only.'
+            bundle exec rake syntax
+          fi
+
+  build:
+    name: 'Build module package (pdk build)'
+    needs:
+      - validate
+      - unit
+    runs-on: ubuntu-latest
+    env:
+      PUPPET_GEM_VERSION: '~> 8.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+      - name: Install PDK
+        # `pdk build` needs the `pdk` binary, which the runner image does not ship.
+        run: |
+          wget -q "https://apt.puppet.com/puppet-tools-release-$(lsb_release -cs).deb"
+          sudo dpkg -i "puppet-tools-release-$(lsb_release -cs).deb"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pdk
+      - name: Build the module package, the way the Forge would
+        run: pdk build
+      - name: Upload module package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: module-package
+          path: pkg/*.tar.gz
+          retention-days: 7
+
+  gate:
+    name: CI gate
+    needs:
+      - validate
+      - unit
+      - acceptance
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'All CI jobs passed.'

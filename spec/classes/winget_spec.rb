@@ -134,6 +134,11 @@ describe 'winget' do
   context 'with minimum OS version check' do
     let(:facts) do
       {
+        # Legacy facts: facterdb provides them and rspec-puppet stubs
+        # Facter from them, which the exec providers use for confinement.
+        # Without them no exec provider is suitable on Puppet 7.
+        'operatingsystem' => 'windows',
+        'osfamily' => 'windows',
         os: {
           family: 'windows',
           name: 'windows',
@@ -152,6 +157,9 @@ describe 'winget' do
     # silently skips it: cover it explicitly with hand-written facts.
     let(:facts) do
       {
+        # Legacy facts: see 'with minimum OS version check' above.
+        'operatingsystem' => 'windows',
+        'osfamily' => 'windows',
         os: {
           family: 'windows',
           name: 'windows',
