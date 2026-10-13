@@ -84,10 +84,11 @@ jobs:
           ruby-version: '3.2'
           bundler-cache: true
       - name: Install PDK
+        shell: pwsh
         run: |
           choco install pdk -y --no-progress
           # choco only refreshes PATH for new shells: export PDK for later steps.
-          echo 'C:\Program Files\Puppet Labs\DevelopmentKit\bin' >> $GITHUB_PATH
+          'C:\Program Files\Puppet Labs\DevelopmentKit\bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Validate module on Windows
         run: pdk validate
       - name: Run Litmus acceptance tests
