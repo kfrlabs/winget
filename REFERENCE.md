@@ -64,6 +64,7 @@ The following parameters are available in the `winget` class:
 * [`version`](#-winget--version)
 * [`source`](#-winget--source)
 * [`source_path`](#-winget--source_path)
+* [`dependencies`](#-winget--dependencies)
 * [`proxy`](#-winget--proxy)
 * [`accept_source_agreements`](#-winget--accept_source_agreements)
 * [`enable_winget`](#-winget--enable_winget)
@@ -90,8 +91,11 @@ Default value: `undef`
 
 Data type: `Enum['msstore', 'github', 'auto']`
 
-Installation source for winget. Valid values: 'msstore' (Microsoft Store), 'github'
-(GitHub releases), or 'auto' (tries msstore first, falls back to github). Default: 'auto'.
+Installation source for winget. Valid values: 'msstore' (Microsoft Store),
+'github' (GitHub releases), or 'auto' (tries msstore first, falls back to
+github). Default: 'auto'. When a specific version is requested via
+`ensure`/`version`, `auto` uses `github` directly: the Microsoft CDN
+always serves the latest App Installer, so msstore cannot honor a pin.
 
 Default value: `'auto'`
 
@@ -99,11 +103,23 @@ Default value: `'auto'`
 
 Data type: `Optional[String]`
 
-Local filesystem path to a winget AppX/MSIX bundle file. When specified, this takes
-precedence over `source`. Use for offline installation. The file must be a valid
-Microsoft.WinGet.Client or Microsoft.DesktopAppInstaller package.
+Local filesystem path to a winget AppX/MSIX bundle file. When specified,
+this takes precedence over `source`: only the local file is installed and
+no `msstore`/`github` download is attempted. Use for offline installation.
+The file must be a valid Microsoft.WinGet.Client or
+Microsoft.DesktopAppInstaller package.
 
 Default value: `undef`
+
+##### <a name="-winget--dependencies"></a>`dependencies`
+
+Data type: `Array[String]`
+
+Array of local AppX/MSIX files installed before the `source_path` bundle
+(e.g. VCLibs / UI.Xaml framework packages for offline hosts). Only used
+together with `source_path`.
+
+Default value: `[]`
 
 ##### <a name="-winget--proxy"></a>`proxy`
 
@@ -137,6 +153,14 @@ Reads package IDs from the `winget_upgrades` fact and declares one `package`
 resource with `ensure => latest` (winget provider) per ID. Upgrades are
 therefore regular Puppet resources (reporting, noop, `--tags`) instead of
 an out-of-band scheduled task script.
+
+A package already declared elsewhere in the catalog (e.g. `package {
+'Git.Git': ensure => present }`) is left alone: redeclaring it would be a
+duplicate-declaration error. Such packages are therefore skipped here; to
+upgrade them, either remove the other declaration or list the ID in
+`exclude` and manage its upgrade yourself. Note the `defined()` guard only
+sees resources parsed before this class, so declare `winget::upgrade`
+after your own `package` resources (or rely on `exclude`).
 
 The fact runs `winget upgrade` once per agent run (source round-trips, a few
 seconds) even when the packages are skipped by a `schedule` metaparameter:
@@ -221,6 +245,11 @@ Name of a Puppet `schedule` resource applied as metaparameter to every
 managed package. Declare the resource yourself, or set `manage_schedule`
 to have this class declare it. Undef (default) means no schedule: packages
 are enforced on every agent run.
+Note: this parameter intentionally shares its name with the Puppet
+`schedule` metaparameter. In a resource-like class declaration (`class {
+'winget::upgrade': schedule => '...', }`) the class parameter wins and is
+forwarded as the metaparameter to the managed packages; this is covered
+by unit tests on Puppet 7 and 8.
 
 Default value: `undef`
 
@@ -353,6 +382,10 @@ All commands run through the fully qualified PowerShell executable: the
 
 === Parameters
 
+* **Note** When `ensure` pins a version, the `source_path` bundle must contain
+that version: the guard reinstalls while the installed version differs,
+so a mismatching file would reinstall on every run.
+
 #### Parameters
 
 The following parameters are available in the `winget::install::local` defined type:
@@ -391,6 +424,7 @@ Default value: `undef`
 Data type: `Array[String]`
 
 Array of dependency AppX/MSIX files to install first. Optional.
+Typically the VCLibs / UI.Xaml framework packages on offline hosts.
 
 Default value: `[]`
 
@@ -403,6 +437,11 @@ Installs winget from the Microsoft CDN distribution of App Installer
 the Microsoft Store app because it works in the SYSTEM context without the
 Store and without an existing winget CLI, and it accepts the same proxy
 settings as the other install methods.
+
+The install runs only when App Installer is absent (presence guard): this
+matters because the bundle version and the inner payload version can differ
+(e.g. bundle 2026.728.x carrying a 1.29.290 payload), and Windows refuses
+downgrades (0x80073D19), so reinstalling over a newer build would fail.
 
 All commands run through the fully qualified PowerShell executable: the
 `winget` alias is unavailable in the agent/SYSTEM context, so no bare

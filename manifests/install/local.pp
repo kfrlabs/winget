@@ -24,7 +24,11 @@
 #
 # @param dependencies
 #   Array of dependency AppX/MSIX files to install first. Optional.
+#   Typically the VCLibs / UI.Xaml framework packages on offline hosts.
 #
+# @note When `ensure` pins a version, the `source_path` bundle must contain
+#   that version: the guard reinstalls while the installed version differs,
+#   so a mismatching file would reinstall on every run.
 define winget::install::local (
   String $source_path,
   String $ensure              = 'present',
@@ -55,18 +59,44 @@ define winget::install::local (
       timeout => 300,
     }
   } else {
-    # Install dependencies first
+    # Escape single quotes for PowerShell single-quoted literals.
+    $quoted_source = regsubst($source_path, "'", "''", 'G')
+
+    # Same version-aware guard as the github source: a pinned version
+    # reinstalls while the installed version differs, and is a no-op once it
+    # matches. AppX versions carry an extra revision segment (installed
+    # `1.8.2391.0` satisfies pin `1.8.2391`).
+    if $real_ensure =~ /^\d+(\.\d+)+$/ {
+      $version_re = regsubst($real_ensure, '\.', '\\.', 'G')
+      $presence_check = "if (((Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller | Select-Object -First 1).Version -join '') -match '^${version_re}(\\.|$)') { exit 0 } else { exit 1 }"
+    } else {
+      $presence_check = 'if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }'
+    }
+
+    # Install dependencies first. The dependency identity (package Name) is
+    # read from the manifest embedded in each bundle: unlike the previous
+    # `Get-AppxPackageManifest -Path` (no such `-Path` parameter; the cmdlet
+    # takes `-Package`), opening the bundle as a zip works for any
+    # .appx/.msix file. Plain packages carry `AppxManifest.xml` at the zip
+    # root, while .appxbundle/.msixbundle files carry
+    # `AppxMetadata/AppxBundleManifest.xml` with a `<Bundle>` root instead of
+    # `<Package>`: both layouts are tried. The guard skips bundles whose
+    # package is already installed for all users.
     $dependencies.each |$dep| {
+      $quoted_dep = regsubst($dep, "'", "''", 'G')
       exec { "winget_install_dep_${dep}_${title}":
-        command => "${powershell} -NoProfile -Command \"Add-AppxPackage -Path '${dep}'\"",
-        onlyif  => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers -Name (Get-AppxPackageManifest -Path '${dep}').Package.PackageIdentity.Name) { exit 0 } else { exit 1 }\"",
+        command => "${powershell} -NoProfile -Command \"try { Add-AppxPackage -Path '${quoted_dep}' -ErrorAction Stop } catch { Add-AppxProvisionedPackage -Online -PackagePath '${quoted_dep}' -SkipLicense }\"",
+        unless  => "${powershell} -NoProfile -Command \"Add-Type -AssemblyName System.IO.Compression.FileSystem; \$zip = [System.IO.Compression.ZipFile]::OpenRead('${quoted_dep}'); try { \$entry = \$zip.GetEntry('AppxManifest.xml'); if (\$entry) { \$reader = New-Object System.IO.StreamReader(\$entry.Open()); [xml]\$manifest = \$reader.ReadToEnd(); \$dep_name = \$manifest.Package.Identity.Name } else { \$bundle_entry = \$zip.GetEntry('AppxMetadata/AppxBundleManifest.xml'); \$bundle_reader = New-Object System.IO.StreamReader(\$bundle_entry.Open()); [xml]\$bundle_manifest = \$bundle_reader.ReadToEnd(); \$dep_name = \$bundle_manifest.Bundle.Identity.Name } } finally { if (\$reader) { \$reader.Close() }; if (\$bundle_reader) { \$bundle_reader.Close() }; \$zip.Dispose() }; if (\$dep_name -and (Get-AppxPackage -AllUsers -Name \$dep_name)) { exit 0 } else { exit 1 }\"",
         timeout => 300,
       }
     }
 
+    # `Add-AppxPackage` is flaky under the SYSTEM account, so fall back to
+    # `Add-AppxProvisionedPackage -Online -SkipLicense`, which stages the
+    # package for all users without a Store license.
     exec { "winget_install_local_${title}":
-      command   => "${powershell} -NoProfile -Command \"Add-AppxPackage -Path '${source_path}'\"",
-      onlyif    => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 1 } else { exit 0 }\"",
+      command   => "${powershell} -NoProfile -Command \"try { Add-AppxPackage -Path '${quoted_source}' -ErrorAction Stop } catch { Add-AppxProvisionedPackage -Online -PackagePath '${quoted_source}' -SkipLicense }\"",
+      unless    => "${powershell} -NoProfile -Command \"${presence_check}\"",
       timeout   => 300,
       tries     => 3,
       try_sleep => 10,

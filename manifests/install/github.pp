@@ -67,13 +67,28 @@ define winget::install::github (
       $download_env = undef
     }
 
+    # A pinned version makes the guard version-aware so `ensure =>
+    # '1.8.2391'` converges (reinstalls when another version is present) and
+    # stays idempotent once installed. Without a pin, the guard stays
+    # presence-based. AppX versions carry an extra revision segment
+    # (e.g. installed `1.8.2391.0` satisfies pin `1.8.2391`).
+    if $real_ensure =~ /^\d+(\.\d+)+$/ {
+      $version_re = regsubst($real_ensure, '\.', '\\.', 'G')
+      $presence_check = "if (((Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller | Select-Object -First 1).Version -join '') -match '^${version_re}(\\.|$)') { exit 0 } else { exit 1 }"
+    } else {
+      $presence_check = 'if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }'
+    }
+
+    # `Add-AppxPackage` is flaky under the SYSTEM account, so fall back to
+    # `Add-AppxProvisionedPackage -Online -SkipLicense`, which stages the
+    # package for all users without a Store license.
     exec { "winget_install_github_${title}":
-      command     => "${powershell} -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-WebRequest -UseBasicParsing -Uri '${download_url}' -OutFile (Join-Path \$env:TEMP 'winget.msixbundle'); Add-AppxPackage -Path (Join-Path \$env:TEMP 'winget.msixbundle')\"",
+      command     => "${powershell} -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-WebRequest -UseBasicParsing -Uri '${download_url}' -OutFile (Join-Path \$env:TEMP 'winget.msixbundle'); try { Add-AppxPackage -Path (Join-Path \$env:TEMP 'winget.msixbundle') -ErrorAction Stop } catch { Add-AppxProvisionedPackage -Online -PackagePath (Join-Path \$env:TEMP 'winget.msixbundle') -SkipLicense }\"",
       timeout     => 600,
       tries       => $retry_count,
       try_sleep   => $retry_interval,
       environment => $download_env,
-      unless      => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
+      unless      => "${powershell} -NoProfile -Command \"${presence_check}\"",
     }
   }
 }

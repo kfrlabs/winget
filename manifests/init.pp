@@ -40,13 +40,23 @@
 #   This parameter is kept for backward compatibility.
 #
 # @param source
-#   Installation source for winget. Valid values: 'msstore' (Microsoft Store), 'github'
-#   (GitHub releases), or 'auto' (tries msstore first, falls back to github). Default: 'auto'.
+#   Installation source for winget. Valid values: 'msstore' (Microsoft Store),
+#   'github' (GitHub releases), or 'auto' (tries msstore first, falls back to
+#   github). Default: 'auto'. When a specific version is requested via
+#   `ensure`/`version`, `auto` uses `github` directly: the Microsoft CDN
+#   always serves the latest App Installer, so msstore cannot honor a pin.
 #
 # @param source_path
-#   Local filesystem path to a winget AppX/MSIX bundle file. When specified, this takes
-#   precedence over `source`. Use for offline installation. The file must be a valid
-#   Microsoft.WinGet.Client or Microsoft.DesktopAppInstaller package.
+#   Local filesystem path to a winget AppX/MSIX bundle file. When specified,
+#   this takes precedence over `source`: only the local file is installed and
+#   no `msstore`/`github` download is attempted. Use for offline installation.
+#   The file must be a valid Microsoft.WinGet.Client or
+#   Microsoft.DesktopAppInstaller package.
+#
+# @param dependencies
+#   Array of local AppX/MSIX files installed before the `source_path` bundle
+#   (e.g. VCLibs / UI.Xaml framework packages for offline hosts). Only used
+#   together with `source_path`.
 #
 # @param proxy
 #   Proxy URL for downloading winget (e.g., 'http://proxy.example.com:8080'). Only used
@@ -70,6 +80,7 @@ class winget (
   Optional[String] $version         = undef,
   Enum['msstore', 'github', 'auto'] $source = 'auto',
   Optional[String] $source_path     = undef,
+  Array[String] $dependencies       = [],
   Optional[String] $proxy           = undef,
   Boolean $accept_source_agreements = true,
   Boolean $enable_winget            = true,
@@ -106,43 +117,65 @@ class winget (
         provider => 'winget',
       }
     } else {
-      # Install winget using the selected source
-      case $source {
-        'msstore': {
-          winget::install::msstore { 'winget':
-            ensure                   => $real_ensure,
-            accept_source_agreements => $accept_source_agreements,
-            proxy                    => $proxy,
-          }
-        }
-        'github': {
-          winget::install::github { 'winget':
-            ensure => $real_ensure,
-            proxy  => $proxy,
-          }
-        }
-        'auto': {
-          # Try msstore first, fall back to github
-          winget::install::msstore { 'winget':
-            ensure                   => $real_ensure,
-            accept_source_agreements => $accept_source_agreements,
-            proxy                    => $proxy,
-          }
-          -> winget::install::github { 'winget_fallback':
-            ensure => $real_ensure,
-            proxy  => $proxy,
-          }
-        }
-        default: {
-          fail("Invalid source '${source}'. Valid values: 'msstore', 'github', 'auto'")
-        }
+      # Dependencies only make sense together with a local bundle.
+      if !$dependencies.empty and $source_path == undef {
+        fail('winget: dependencies requires source_path to be set.')
       }
-
-      # If source_path is provided, use it instead (takes precedence)
+      # If source_path is provided, only the local file is installed: it
+      # takes precedence over `source`, so no msstore/github download is
+      # attempted and the two installations cannot race each other.
       if $source_path {
         winget::install::local { 'winget_local':
-          ensure      => $real_ensure,
-          source_path => $source_path,
+          ensure       => $real_ensure,
+          source_path  => $source_path,
+          dependencies => $dependencies,
+        }
+      } else {
+        # Install winget using the selected source
+        case $source {
+          'msstore': {
+            winget::install::msstore { 'winget':
+              ensure                   => $real_ensure,
+              accept_source_agreements => $accept_source_agreements,
+              proxy                    => $proxy,
+            }
+          }
+          'github': {
+            winget::install::github { 'winget':
+              ensure => $real_ensure,
+              proxy  => $proxy,
+            }
+          }
+          'auto': {
+            # The msstore CDN always serves the latest App Installer and
+            # cannot honor a version pin: with a pinned version, go straight
+            # to github so `ensure => '1.8.2391'` actually converges.
+            if $real_ensure =~ /^\d+(\.\d+)+$/ {
+              winget::install::github { 'winget':
+                ensure => $real_ensure,
+                proxy  => $proxy,
+              }
+            } else {
+              # msstore first, github as independent fallback (no chaining
+              # arrow: with `->`, a failed msstore exec would skip the
+              # fallback, and a successful one would make it a no-op, so the
+              # fallback would never run). Both execs carry an `unless`
+              # presence guard; the catalog applies msstore first, and the
+              # fallback still runs when msstore fails.
+              winget::install::msstore { 'winget':
+                ensure                   => $real_ensure,
+                accept_source_agreements => $accept_source_agreements,
+                proxy                    => $proxy,
+              }
+              winget::install::github { 'winget_fallback':
+                ensure => $real_ensure,
+                proxy  => $proxy,
+              }
+            }
+          }
+          default: {
+            fail("Invalid source '${source}'. Valid values: 'msstore', 'github', 'auto'")
+          }
         }
       }
     }

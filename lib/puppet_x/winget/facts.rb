@@ -64,6 +64,10 @@ module PuppetX
         # The header match stays language-agnostic (Nom / Disponible on French
         # systems). Rows shorter than the Version column (e.g. the "N upgrades
         # available." footer) are skipped: package IDs never contain spaces.
+        # `winget upgrade` may print several tables (upgrades, then packages
+        # requiring explicit targeting when some versions are unknown), each
+        # with its own header: every table is parsed with its own offsets so
+        # a later header's `Id` cell is never mistaken for a package ID.
         # @param output [String, nil] Raw output from `winget upgrade`
         # @return [Array<String>] Deduplicated package IDs
         def parse_winget_upgrade(output)
@@ -72,25 +76,42 @@ module PuppetX
 
           lines = output.lines.map(&:chomp).reject(&:empty?)
 
-          header_idx = lines.find_index { |line| line.match?(%r{Id.*Version}i) }
-          return ids unless header_idx
+          header_indices = lines.each_index.select { |i| table_header?(lines[i]) }
+          return ids if header_indices.empty?
 
-          id_start, version_start = column_offsets(lines[header_idx])
-          return ids unless id_start && version_start
+          header_indices.each do |header_idx|
+            id_start, version_start = column_offsets(lines[header_idx])
+            next unless id_start && version_start
 
-          data_lines = lines[(header_idx + 2)..] || []
-          data_lines.each do |line|
-            next if line.match?(%r{^[-=]+\s*$})
-            next if line.length < version_start
+            data_lines = lines[(header_idx + 2)..] || []
+            data_lines.each do |line|
+              break if table_header?(line)
+              next if line.match?(%r{^[-=]+\s*$})
+              next if line.length < version_start
 
-            id = line[id_start...version_start]&.strip
-            next if id.nil? || id.empty?
-            next if id.match?(%r{\s})
+              id = line[id_start...version_start]&.strip
+              next if id.nil? || id.empty?
+              next if id.match?(%r{\s})
 
-            ids << id unless ids.include?(id)
+              ids << id unless ids.include?(id)
+            end
           end
 
           ids
+        end
+
+        # Whether a line is a winget table header (and not a data row that
+        # merely mentions "Id" and "Version"): the Id column cell must read
+        # exactly `Id`.
+        # @param line [String] Candidate output line
+        # @return [Boolean] True when the line opens a result table
+        def table_header?(line)
+          return false unless line.match?(%r{Id.*Version}i)
+
+          id_start, version_start = column_offsets(line)
+          return false unless id_start && version_start
+
+          line[id_start...version_start]&.strip&.match?(%r{\AId\z}i) || false
         end
 
         # Locate the Id and Version column starts in a winget table header.

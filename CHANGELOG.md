@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `source => 'auto'` fallback: the `github` fallback is no longer chained
+  after `msstore` with `->`, so it still runs when the `msstore` install
+  fails (previously it never ran: skipped on failure, no-op on success)
+- `auto` with a pinned version (`ensure => '1.8.2391'`) now installs from
+  `github` directly, since the `msstore` CDN always serves latest and cannot
+  honor a pin; `msstore` with a pin logs a warning explaining this
+- `source_path` precedence: when set, only the local bundle is installed and
+  no `msstore`/`github` download is attempted (previously both ran and raced)
+- Version pinning is now idempotent for the `github` and `local` sources via
+  a version-aware `unless` guard (AppX revision segment tolerated); new
+  `dependencies` parameter on class `winget`, forwarded to the local install
+- `winget::install::local` dependencies: replaced the invalid
+  `Get-AppxPackageManifest -Path` guard (no such parameter) with a manifest
+  identity read from the embedded `AppxManifest.xml`, and fixed the inverted
+  `onlyif` (dependencies installed when present, skipped when absent)
+- Bootstrap installs fall back to `Add-AppxProvisionedPackage -Online
+  -SkipLicense` when `Add-AppxPackage` fails under the SYSTEM account
+- `winget upgrade` fact parser handles multi-table output (explicit-targeting
+  table): each table is parsed with its own header offsets instead of leaking
+  the second header's `Id` cell as a package ID
+- `winget::upgrade` skips packages already declared elsewhere in the catalog
+  instead of failing with a duplicate-declaration error (declare the class
+  after your own `package` resources, or use `exclude`)
+- Acceptance test no longer asserts `Git.Git` is installed by the bare
+  `winget` class: it checks `winget --version` after bootstrap, then installs
+  `Git.Git` through the provider in a dedicated step
+
 ## [1.0.0] - 2026-10-13
 
 ### Added

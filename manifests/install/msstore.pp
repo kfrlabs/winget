@@ -8,6 +8,11 @@
 # Store and without an existing winget CLI, and it accepts the same proxy
 # settings as the other install methods.
 #
+# The install runs only when App Installer is absent (presence guard): this
+# matters because the bundle version and the inner payload version can differ
+# (e.g. bundle 2026.728.x carrying a 1.29.290 payload), and Windows refuses
+# downgrades (0x80073D19), so reinstalling over a newer build would fail.
+#
 # All commands run through the fully qualified PowerShell executable: the
 # `winget` alias is unavailable in the agent/SYSTEM context, so no bare
 # `winget` command is used here.
@@ -66,8 +71,21 @@ define winget::install::msstore (
       $download_env = undef
     }
 
+    # The Microsoft CDN always serves the latest App Installer, so a pinned
+    # version cannot be honored here (use the `github` source or a local file
+    # to pin). The guard below therefore stays presence-based on purpose: a
+    # version-based guard would reinstall latest on every run when a version
+    # is pinned, and could never converge.
+    if $real_ensure =~ /^\d+(\.\d+)+$/ {
+      warning("winget::install::msstore[${title}]: ensure '${real_ensure}' pins a version, but the msstore source always installs the latest App Installer. Use source => 'github' or source_path to pin a version.")
+    }
+
+    # `Add-AppxPackage` is flaky under the SYSTEM account and the aka.ms
+    # bundle does not embed the VCLibs / UI.Xaml framework packages, so fall
+    # back to `Add-AppxProvisionedPackage -Online -SkipLicense`, which stages
+    # the package for all users without a Store license.
     exec { "winget_install_msstore_${title}":
-      command     => "${powershell} -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-WebRequest -UseBasicParsing -Uri 'https://aka.ms/getwinget' -OutFile (Join-Path \$env:TEMP 'winget.msixbundle'); Add-AppxPackage -Path (Join-Path \$env:TEMP 'winget.msixbundle')\"",
+      command     => "${powershell} -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-WebRequest -UseBasicParsing -Uri 'https://aka.ms/getwinget' -OutFile (Join-Path \$env:TEMP 'winget.msixbundle'); try { Add-AppxPackage -Path (Join-Path \$env:TEMP 'winget.msixbundle') -ErrorAction Stop } catch { Add-AppxProvisionedPackage -Online -PackagePath (Join-Path \$env:TEMP 'winget.msixbundle') -SkipLicense }\"",
       environment => $download_env,
       timeout     => 600,
       tries       => $retry_count,

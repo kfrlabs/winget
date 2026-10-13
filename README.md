@@ -139,6 +139,12 @@ Note: the `winget_upgrades` fact runs `winget upgrade` once per agent run
 even when the packages are skipped by the schedule; the schedule only skips
 the `package` resources outside the window.
 
+A package already declared elsewhere in the catalog (e.g. `package {
+'Git.Git': ensure => present }`) is left alone by `winget::upgrade`:
+redeclaring it would fail with a duplicate-declaration error. Declare
+`winget::upgrade` after your own `package` resources, or list such IDs in
+`exclude` and manage their upgrades yourself.
+
 #### Microsoft Store Source
 
 ```puppet
@@ -194,14 +200,21 @@ methods download (or accept) a real App Installer package and install it with
   Microsoft download channel for App Installer, and unlike the Store app it
   works headless under SYSTEM with no Store dependency and no winget CLI.
   It always installs the latest published build; pin a version with one of
-  the methods below instead.
+  the methods below instead. The install only runs when App Installer is
+  absent: the bundle version and the inner payload version can differ, and
+  Windows refuses downgrades (`0x80073D19`), so reinstalling over a newer
+  build would fail.
 - `github` downloads a versioned `Microsoft.WinGet.Client` bundle from the
   `microsoft/winget-cli` GitHub releases. This is the recommended method for
   pinning an exact winget version.
 - `local` installs a caller-supplied AppX/MSIX/MSIXBundle file (plus optional
   dependency packages) for fully offline environments.
-- `auto` (the default) runs the `msstore` method first, then the `github`
-  method as a fallback.
+- `auto` (the default) tries the `msstore` method first, then the `github`
+  method as an independent fallback: the fallback has no ordering
+  dependency on `msstore`, so it still runs when the `msstore` install
+  fails. When a specific version is requested (`ensure => '1.8.2391'`),
+  `auto` uses `github` directly, because the `msstore` CDN always serves
+  the latest build and cannot honor a pin.
 
 #### Minimal Bootstrap
 
@@ -220,8 +233,6 @@ class { 'winget':
   source => 'msstore',
 }
 ```
-
-#### Pinned Version from GitHub Releases
 
 #### Pinned Version from GitHub Releases
 
@@ -393,7 +404,15 @@ By default, the bootstrap class accepts source agreements automatically (`accept
 
 ### Offline Installation
 
-Offline installation via `source_path` requires a valid Microsoft.WinGet.Client or Microsoft.DesktopAppInstaller `.appx`, `.msix`, `.msixbundle`, or `.appxbundle` file with all dependencies. Dependency files must be provided separately via the `dependencies` parameter.
+Offline installation via `source_path` requires a valid Microsoft.WinGet.Client or Microsoft.DesktopAppInstaller `.appx`, `.msix`, `.msixbundle`, or `.appxbundle` file with all dependencies. Dependency files must be provided separately via the `dependencies` parameter. When `source_path` is set it takes precedence: only the local file is installed and no `msstore`/`github` download is attempted.
+
+```puppet
+class { 'winget':
+  ensure       => '1.8.2391',
+  source_path  => 'C:/Sources/Microsoft.WinGet.Client_1.8.2391_x64.msixbundle',
+  dependencies => ['C:/Sources/Microsoft.VCLibs.x64.appx'],
+}
+```
 
 ### Architecture Support
 
@@ -441,6 +460,20 @@ Offline installation via `source_path` requires a valid Microsoft.WinGet.Client 
 - Use `source => 'github'` instead
 - Use `source_path` with a local AppX/MSIX file
 - Install Microsoft Store on Server first (not recommended for production)
+
+### Cannot uninstall App Installer (NonRemovable Store package)
+
+**Cause**: A Store-installed `Microsoft.DesktopAppInstaller` can be flagged
+`NonRemovable`: both `Remove-AppxPackage -AllUsers` and
+`Remove-AppxProvisionedPackage -Online` then fail with "Removal failed".
+This was observed live on Windows Server 2025 (App Installer 1.29.380.0,
+`SignatureKind=Store`, absent from the provisioned list).
+
+**Consequences**: the bootstrap installers only run when App Installer is
+absent (presence guard), so this never blocks Puppet runs — but you cannot
+force a reinstall/downgrade via the module on such a host. Windows also
+refuses downgrades (`0x80073D19`) when a bundle payload is older than the
+installed build.
 
 ### winget_version fact returns nil but winget is installed
 

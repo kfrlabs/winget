@@ -7,6 +7,14 @@
 # therefore regular Puppet resources (reporting, noop, `--tags`) instead of
 # an out-of-band scheduled task script.
 #
+# A package already declared elsewhere in the catalog (e.g. `package {
+# 'Git.Git': ensure => present }`) is left alone: redeclaring it would be a
+# duplicate-declaration error. Such packages are therefore skipped here; to
+# upgrade them, either remove the other declaration or list the ID in
+# `exclude` and manage its upgrade yourself. Note the `defined()` guard only
+# sees resources parsed before this class, so declare `winget::upgrade`
+# after your own `package` resources (or rely on `exclude`).
+#
 # The fact runs `winget upgrade` once per agent run (source round-trips, a few
 # seconds) even when the packages are skipped by a `schedule` metaparameter:
 # the schedule only skips the `package` resources outside the window, it does
@@ -26,6 +34,11 @@
 #   managed package. Declare the resource yourself, or set `manage_schedule`
 #   to have this class declare it. Undef (default) means no schedule: packages
 #   are enforced on every agent run.
+#   Note: this parameter intentionally shares its name with the Puppet
+#   `schedule` metaparameter. In a resource-like class declaration (`class {
+#   'winget::upgrade': schedule => '...', }`) the class parameter wins and is
+#   forwarded as the metaparameter to the managed packages; this is covered
+#   by unit tests on Puppet 7 and 8.
 # @param manage_schedule
 #   Whether this class declares `schedule { $schedule: ... }` from the
 #   `schedule_*` parameters below.
@@ -116,15 +129,23 @@ class winget::upgrade (
   }.unique
 
   if $_schedule {
-    package { $targets:
-      ensure   => latest,
-      provider => winget,
-      schedule => $_schedule,
+    $targets.each |$id| {
+      if !defined(Package[$id]) {
+        package { $id:
+          ensure   => latest,
+          provider => winget,
+          schedule => $_schedule,
+        }
+      }
     }
   } else {
-    package { $targets:
-      ensure   => latest,
-      provider => winget,
+    $targets.each |$id| {
+      if !defined(Package[$id]) {
+        package { $id:
+          ensure   => latest,
+          provider => winget,
+        }
+      }
     }
   }
 }
