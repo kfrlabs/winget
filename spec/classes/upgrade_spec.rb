@@ -40,6 +40,24 @@ describe 'winget::upgrade' do
         it { is_expected.to have_package_resource_count(0) }
       end
 
+      context 'when a target is already declared elsewhere' do
+        let(:pre_condition) do
+          <<~PUPPET
+            package { 'Git.Git':
+              ensure   => present,
+              provider => winget,
+            }
+          PUPPET
+        end
+
+        it { is_expected.to compile.with_all_deps }
+
+        it 'leaves the existing declaration alone instead of failing duplicately' do
+          is_expected.to contain_package('Git.Git').with_ensure('present')
+          is_expected.to contain_package('Notepad++.Notepad++').with_ensure('latest')
+        end
+      end
+
       context 'with exclude' do
         let(:params) { { exclude: ['git.git'] } }
 

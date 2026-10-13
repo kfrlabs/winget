@@ -310,6 +310,23 @@ RSpec.describe PuppetX::Winget::Facts do
       expect(described_class.parse_winget_upgrade(output)).to eq(['Git.Git'])
     end
 
+    it 'parses output with a second explicit-targeting table' do
+      # winget prints a second table with its own header when some upgrades
+      # require explicit targeting (unknown versions). Both tables are
+      # parsed, and neither header's `Id` cell leaks in as a package ID.
+      output = <<~OUTPUT
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+        The following packages have an upgrade available, but require explicit targeting:
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Foo               Foo.Foo                 1.0       2.0         winget
+        2 upgrades available.
+      OUTPUT
+      expect(described_class.parse_winget_upgrade(output)).to eq(['Git.Git', 'Foo.Foo'])
+    end
+
     it 'parses real-world output with collapsed single-space gaps' do
       # winget shrinks inter-column gaps to one space for long names
       # (truncated with `…`): a whitespace split reads the installed version
