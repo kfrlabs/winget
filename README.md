@@ -306,6 +306,21 @@ class { 'winget':
 Class['winget'] -> Package <| provider == winget |>
 ```
 
+#### First Run (Bootstrap and Packages in One Catalog)
+
+On a node where winget is not installed yet, a `package` resource with
+`provider => winget` fails with `Provider winget is not functional on this
+host` if Puppet evaluates it before the bootstrap installed winget. Always
+keep the ordering relationship above.
+
+With that ordering, a single agent run converges: the provider re-resolves
+`winget.exe` on every call while it is absent (a `nil` path is never
+memoized), so the package installs once the bootstrap `exec` resources have
+run. The prefetch listing taken before the bootstrap simply reports packages
+as absent, which is correct on a host without winget. Without the ordering,
+the first run may fail as above and only the second run (winget now present)
+succeeds.
+
 ### Facts
 
 The module provides three custom facts for inventory and conditional logic:
@@ -467,6 +482,10 @@ class { 'winget':
 1. winget is not installed → Use the `winget` class to bootstrap it
 2. SYSTEM cannot read `%ProgramFiles%\WindowsApps` → Fix ACLs as described above
 3. winget is installed but in an unexpected location → Report an issue
+4. First run without ordering: a `package` with `provider => winget` evaluated
+   before the bootstrap fails with `Provider winget is not functional on this
+   host` → Add `Class['winget'] -> Package <| provider == winget |>` (see
+   [First Run](#first-run-bootstrap-and-packages-in-one-catalog))
 
 ### Package installation fails with exit code 0x8A150006 (NOT_FOUND)
 
@@ -562,15 +581,30 @@ pdk bundle exec puppet strings generate --format markdown
 
 ## Acceptance Testing
 
-### Litmus Setup
+### CI (Windows runner, real `puppet apply`, no Litmus)
 
-This module includes optional Litmus acceptance testing configuration for Windows. However, running Windows acceptance tests requires:
+The `acceptance` CI job runs on `windows-latest` with a real Puppet agent.
+It is part of the gate and never degrades to a syntax-only check:
+
+1. Installs `puppet-agent` via Chocolatey.
+2. Stages the repo as the `winget` module in the agent modulepath.
+3. Applies `class { 'winget': ensure => present }` with
+   `--detailed-exitcodes` (first run: 0 or 2), then applies the same manifest
+   again and requires exit code 0 (idempotency).
+4. Checks `winget --version`, then evaluates a noop catalog with a
+   `package { 'Git.Git': provider => winget }` ordered after
+   `Class['winget']` to prove the provider loads without installing anything.
+
+### Optional Litmus runs (local only)
+
+The `spec/acceptance` Litmus suite is kept for local runs against a
+provisioned Windows target, but CI does not use it. Running it requires:
 
 1. A Windows test VM (Azure, AWS, or local Hyper-V)
 2. WinRM configured and accessible
 3. Appropriate credentials
 
-Due to the complexity of Windows CI/CD infrastructure, acceptance tests are not run automatically in CI. To run them locally:
+To run them locally:
 
 ```bash
 # Install litmus

@@ -33,6 +33,43 @@ describe 'winget::install::local' do
       .with_command(%r{Add-AppxProvisionedPackage -Online -PackagePath .* -SkipLicense})
   end
 
+  it 'installs with default retries' do
+    is_expected.to contain_exec('winget_install_local_winget_local')
+      .with_tries(3)
+      .with_try_sleep(10)
+  end
+
+  it 'declares no dependency exec without dependencies' do
+    is_expected.to have_exec_resource_count(1)
+  end
+
+  %w[.appx .msix .msixbundle .appxbundle].each do |ext|
+    context "with a #{ext} bundle" do
+      let(:params) { { source_path: "C:/Sources/winget#{ext}" } }
+
+      it { is_expected.to compile.with_all_deps }
+
+      it 'installs the local file' do
+        is_expected.to contain_exec('winget_install_local_winget_local')
+          .with_command(%r{Add-AppxPackage -Path 'C:/Sources/winget})
+      end
+    end
+  end
+
+  %w[.exe .msi .zip].each do |ext|
+    context "with an invalid #{ext} file" do
+      let(:params) { { source_path: "C:/Sources/winget#{ext}" } }
+
+      it { expect { catalogue }.to raise_error(Puppet::Error, %r{Invalid file extension}) }
+    end
+  end
+
+  context 'with a path without extension' do
+    let(:params) { { source_path: 'C:/Sources/winget' } }
+
+    it { expect { catalogue }.to raise_error(Puppet::Error, %r{Invalid file extension}) }
+  end
+
   context 'with dependencies' do
     let(:params) do
       {
@@ -59,12 +96,58 @@ describe 'winget::install::local' do
     end
   end
 
+  context 'with several dependencies' do
+    let(:params) do
+      {
+        source_path: 'C:/Sources/winget.appx',
+        dependencies: ['C:/Sources/VCLibs.appx', 'C:/Sources/UIXaml.appx'],
+      }
+    end
+
+    it { is_expected.to compile.with_all_deps }
+
+    it 'declares one exec per dependency plus the bundle itself' do
+      is_expected.to have_exec_resource_count(3)
+      is_expected.to contain_exec('winget_install_dep_C:/Sources/VCLibs.appx_winget_local')
+      is_expected.to contain_exec('winget_install_dep_C:/Sources/UIXaml.appx_winget_local')
+      is_expected.to contain_exec('winget_install_local_winget_local')
+    end
+  end
+
   context 'with a pinned version' do
     let(:params) { { source_path: 'C:/Sources/winget.appx', ensure: '1.8.2391' } }
 
     it 'guards on the installed version so the pin converges' do
       is_expected.to contain_exec('winget_install_local_winget_local')
         .with_unless(%r{-match '\^1\\.8\\.2391\(\\.|\$\)'})
+    end
+  end
+
+  context 'with deprecated version parameter' do
+    let(:params) { { source_path: 'C:/Sources/winget.appx', version: '1.8.2391' } }
+
+    it { is_expected.to compile.with_all_deps }
+
+    it 'guards on the installed version so the pin converges' do
+      is_expected.to contain_exec('winget_install_local_winget_local')
+        .with_unless(%r{-match '\^1\\.8\\.2391\(\\.|\$\)'})
+    end
+  end
+
+  context 'with ensure => absent' do
+    let(:params) { { source_path: 'C:/Sources/winget.appx', ensure: 'absent' } }
+
+    it { is_expected.to compile.with_all_deps }
+
+    it 'removes App Installer instead of installing it' do
+      is_expected.to contain_exec('winget_uninstall_local_winget_local')
+        .with_command(%r{Remove-AppxPackage -AllUsers})
+        .with_onlyif(%r{Get-AppxPackage -AllUsers Microsoft\.DesktopAppInstaller})
+    end
+
+    it 'declares no install exec and no dependency exec' do
+      is_expected.not_to contain_exec('winget_install_local_winget_local')
+      is_expected.to have_exec_resource_count(1)
     end
   end
 end

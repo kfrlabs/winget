@@ -678,5 +678,220 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       expect(missing.provider.installed_entry).to be_nil
       expect(missing.provider.query).to be_nil
     end
+
+    it 'matches IDs case-insensitively' do
+      expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
+        Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
+      )
+      resource = Puppet::Type.type(:package).new(name: 'git.git', ensure: :installed, provider: :winget)
+      described_class.prefetch('git.git' => resource)
+      expect(resource.provider.installed_entry[:version]).to eq('2.40.0')
+      expect(resource.provider.query[:ensure]).to eq('2.40.0')
+    end
+
+    it 'skips resources managed by another provider' do
+      expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
+        Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
+      )
+      winget_resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: :installed, provider: :winget)
+      other = Puppet::Type.type(:package).new(name: 'Other', ensure: :installed)
+      described_class.prefetch('Git.Git' => winget_resource, 'Other' => other)
+      expect(winget_resource.provider.installed_entry[:version]).to eq('2.40.0')
+    end
+
+    it 'does not raise when the listing fails' do
+      allow(described_class).to receive(:instances_list).and_raise(StandardError.new('boom'))
+      resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: :installed, provider: :winget)
+      expect { described_class.prefetch('Git.Git' => resource) }.not_to raise_error
+    end
+
+    it 'leaves entries absent without raising when winget is unsuitable' do
+      allow(described_class).to receive(:suitable?).and_return(false)
+      allow(described_class).to receive(:instances_list).and_call_original
+      allow(described_class).to receive(:fetch_instances_list).and_call_original
+      resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: :installed, provider: :winget)
+      expect { described_class.prefetch('Git.Git' => resource) }.not_to raise_error
+      expect(resource.provider.installed_entry).to be_nil
+    end
+  end
+
+  describe 'ensure => latest full cycle' do
+    let(:winget_path) { 'C:/Path/to/winget.exe' }
+
+    before(:each) do
+      allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(winget_path)
+      allow(described_class).to receive(:suitable?).and_return(true)
+    end
+
+    context 'when the package is absent' do
+      let(:resource) do
+        Puppet::Type.type(:package).new(
+          name: 'Git.Git',
+          ensure: :latest,
+          provider: :winget
+        )
+      end
+
+      it 'query is nil, latest advertises a version, update installs' do
+        allow(described_class).to receive(:instances_list).and_return({})
+        show_output = Puppet::Util::Execution::ProcessOutput.new("Version: 2.41.0\n", 0)
+        expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git').and_return(show_output)
+        expect(provider.query).to be_nil
+        expect(provider.latest).to eq('2.41.0')
+
+        upgrade_output = Puppet::Util::Execution::ProcessOutput.new(
+          'No installed package found matching input criteria.', 0x8A150014
+        )
+        expect(provider).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git').and_return(upgrade_output)
+        expect(provider).to receive(:install)
+        provider.update
+      end
+    end
+
+    context 'when the package is outdated' do
+      let(:resource) do
+        Puppet::Type.type(:package).new(
+          name: 'Git.Git',
+          ensure: :latest,
+          provider: :winget
+        )
+      end
+
+      it 'latest returns the candidate and update upgrades without reinstalling' do
+        allow(described_class).to receive(:instances_list).and_return(
+          'git.git' => { name: 'Git', version: '2.40.0', source: 'winget', id: 'Git.Git' },
+        )
+        show_output = Puppet::Util::Execution::ProcessOutput.new("Version: 2.41.0\n", 0)
+        expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git').and_return(show_output)
+        expect(provider.latest).to eq('2.41.0')
+
+        upgrade_output = Puppet::Util::Execution::ProcessOutput.new('', 0)
+        expect(provider).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git').and_return(upgrade_output)
+        expect(provider).not_to receive(:install)
+        provider.update
+      end
+    end
+
+    context 'when the package is already at latest (trailing zero segments)' do
+      let(:resource) do
+        Puppet::Type.type(:package).new(
+          name: 'Git.Git',
+          ensure: :latest,
+          provider: :winget
+        )
+      end
+
+      it 'latest reports the installed version so the resource stays in sync' do
+        allow(described_class).to receive(:instances_list).and_return(
+          'git.git' => { name: 'Git', version: '2.40.00.0', source: 'winget', id: 'Git.Git' },
+        )
+        show_output = Puppet::Util::Execution::ProcessOutput.new("Version: 2.40\n", 0)
+        expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git').and_return(show_output)
+        expect(provider.latest).to eq('2.40.00.0')
+      end
+    end
+
+    context 'with a source in install_options' do
+      let(:resource) do
+        Puppet::Type.type(:package).new(
+          name: 'Git.Git',
+          ensure: :latest,
+          provider: :winget,
+          install_options: [{ 'source' => 'msstore' }]
+        )
+      end
+
+      it 'passes --source to show' do
+        show_output = Puppet::Util::Execution::ProcessOutput.new("Version: 2.41.0\n", 0)
+        expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git', '--source', 'msstore').and_return(show_output)
+        expect(provider.latest).to eq('2.41.0')
+      end
+
+      it 'passes --source to upgrade' do
+        upgrade_output = Puppet::Util::Execution::ProcessOutput.new('', 0)
+        expect(provider).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git', '--source', 'msstore').and_return(upgrade_output)
+        provider.update
+      end
+    end
+
+    context 'when show output has no parseable version' do
+      it 'returns nil' do
+        output = Puppet::Util::Execution::ProcessOutput.new('No version here', 0)
+        expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git').and_return(output)
+        expect(provider.latest).to be_nil
+      end
+    end
+
+    context 'cache invalidation' do
+      let(:list_output) do
+        <<~OUTPUT
+          Name                  Id                   Version     Source
+          ----------------------------------------------------------------
+          Git                   Git.Git              2.40.0      winget
+        OUTPUT
+      end
+
+      it 'install clears the list cache so the next lookup re-lists' do
+        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+          Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
+        )
+        described_class.instances_list
+        allow(provider).to receive(:winget_exec).and_return(
+          Puppet::Util::Execution::ProcessOutput.new('', 0),
+        )
+        provider.install
+        described_class.instances_list
+        expect(Puppet::Util::Execution).to have_received(:execute).twice
+      end
+
+      it 'update clears the per-instance entry so query observes the new state' do
+        allow(described_class).to receive(:instances_list).and_return(
+          'git.git' => { name: 'Git', version: '2.40.0', source: 'winget', id: 'Git.Git' },
+        )
+        expect(provider.query[:ensure]).to eq('2.40.0')
+        allow(provider).to receive(:winget_exec).and_return(
+          Puppet::Util::Execution::ProcessOutput.new('', 0),
+        )
+        provider.update
+        allow(described_class).to receive(:instances_list).and_return(
+          'git.git' => { name: 'Git', version: '2.41.0', source: 'winget', id: 'Git.Git' },
+        )
+        expect(provider.query[:ensure]).to eq('2.41.0')
+      end
+    end
+  end
+
+  describe 'first run before bootstrap (winget absent)' do
+    it 'becomes suitable once winget appears: a nil path is re-resolved, not memoized' do
+      allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(nil, 'C:/Path/to/winget.exe')
+      allow(Puppet).to receive(:warning)
+      allow(Puppet).to receive(:debug)
+      expect(described_class.suitable?).to be false
+      expect(described_class.suitable?).to be true
+    end
+
+    it 'prefetch leaves entries absent without raising when winget is missing' do
+      allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(nil)
+      allow(Puppet).to receive(:warning)
+      allow(Puppet).to receive(:debug)
+      resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: :installed, provider: :winget)
+      expect { described_class.prefetch('Git.Git' => resource) }.not_to raise_error
+      expect(resource.provider.installed_entry).to be_nil
+      expect(resource.provider.query).to be_nil
+    end
+
+    it 'install after bootstrap uses the fresh path (ordered Class[winget] -> Package converges in one run)' do
+      allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(nil, 'C:/Path/to/winget.exe')
+      allow(Puppet).to receive(:warning)
+      allow(Puppet).to receive(:debug)
+      resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: :installed, provider: :winget)
+      described_class.prefetch('Git.Git' => resource)
+      expect(resource.provider.query).to be_nil
+      expect(Puppet::Util::Execution).to receive(:execute).with(
+        ['C:/Path/to/winget.exe', 'install', '--id', 'Git.Git', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity', '--exact', '--silent'],
+        hash_including(failonfail: false, combine: true)
+      ).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
+      resource.provider.install
+    end
   end
 end
