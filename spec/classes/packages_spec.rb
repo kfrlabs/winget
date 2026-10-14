@@ -94,6 +94,20 @@ describe 'winget::packages' do
         it { expect { catalogue }.to raise_error(Puppet::Error, %r{hold cannot be combined with ensure}) }
       end
 
+      context 'with hold on a purged package' do
+        let(:params) { { packages: { 'Git.Git' => { 'ensure' => 'purged', 'hold' => true } } } }
+
+        it { expect { catalogue }.to raise_error(Puppet::Error, %r{hold cannot be combined with ensure}) }
+      end
+
+      context 'with hold combined with ensure => latest' do
+        let(:params) { { packages: { 'Git.Git' => { 'ensure' => 'latest', 'hold' => true } } } }
+
+        it 'fails instead of silently letting the explicit upgrade override the pin' do
+          expect { catalogue }.to raise_error(Puppet::Error, %r{hold => true has no effect combined with ensure => 'latest'})
+        end
+      end
+
       context 'without hold' do
         let(:params) { { packages: { 'Git.Git' => 'installed' } } }
 
