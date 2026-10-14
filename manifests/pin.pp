@@ -87,5 +87,10 @@ define winget::pin (
         timeout => 300,
       }
     }
+  } else {
+    # $facts['winget_path'] is nil until winget has run once (e.g. a
+    # fresh node mid-bootstrap): silently skipping would hide this pin
+    # until a later run with no trace in the report.
+    warning("winget::pin[${title}]: winget_path fact is not yet set (winget not bootstrapped on this node yet); this pin will be applied on a later run once the fact is present. Order pins after Class['winget'] to avoid surprises.")
   }
 }

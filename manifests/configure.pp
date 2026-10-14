@@ -44,5 +44,10 @@ define winget::configure (
       unless  => "${powershell} -NoProfile -Command \"& '${winget}' configure test -f '${source}'${agreements_flag} --disable-interactivity\"",
       timeout => 1800,
     }
+  } else {
+    # $facts['winget_path'] is nil until winget has run once (e.g. a
+    # fresh node mid-bootstrap): silently skipping would hide this
+    # configuration until a later run with no trace in the report.
+    warning("winget::configure[${title}]: winget_path fact is not yet set (winget not bootstrapped on this node yet); this configuration will be applied on a later run once the fact is present. Order configurations after Class['winget'] to avoid surprises.")
   }
 }
