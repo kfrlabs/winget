@@ -190,7 +190,7 @@ winget::packages::packages:
     ensure: present
     scope: machine
   Microsoft.VisualStudioCode:
-    ensure: latest
+    ensure: '1.95.0'
     hold: true
   Old.App:
     ensure: absent
@@ -207,6 +207,14 @@ Structured keys (`source`, `scope`, `architecture`, `location`,
 `override`, `installer_type`, `locale`) are translated into
 `winget install` flags and prepended to any extra `install_options`.
 Like `winget::upgrade`, entries already declared elsewhere are left alone.
+
+`hold => true` combined with `ensure => latest` fails at compile time: a
+plain pin (`winget pin add`) only excludes the package from
+`winget upgrade --all`, it does not stop the explicit `winget upgrade --id`
+that `ensure => latest` runs on every single agent run, so the hold would
+be silently ineffective. Pin to an explicit version instead (as above), or
+combine `ensure => latest` with a blocking `winget::pin` if explicit
+upgrades must also be refused.
 
 #### Holding Packages Back (pins)
 
@@ -281,7 +289,10 @@ Class['winget'] -> Class['winget::sources']
 ```
 
 The optional `header` parameter (REST auth header) is `Sensitive` and never
-lands in logs or reports.
+lands in logs or reports: the unwrapped value is passed to the child
+process through an environment variable (`WINGET_SOURCE_HEADER`), never on
+the command line, so it does not appear in debug output, process listings
+or failure reports either.
 
 #### Install Scope and Structured Parameters
 
@@ -349,7 +360,12 @@ class { 'winget::packages':
 #### Winget Client Settings
 
 The `winget::settings` class manages `settings.json` for the agent account
-(SYSTEM by default), merging `settings` with `experimental_features`:
+(SYSTEM by default), merging `settings` with `experimental_features`. The
+file is replaced wholesale on every run — it is NOT merged with whatever
+settings.json already contains on the node — so declare every key you
+care about. The parent `LocalState` directory is created automatically if
+it does not exist yet (e.g. winget has never run interactively under that
+profile):
 
 ```puppet
 class { 'winget::settings':
@@ -844,6 +860,46 @@ are not success codes: the install did not complete.
 **Cause**: Installation succeeded but requires a reboot.
 
 **Solution**: Schedule a reboot. Puppet will warn but treat as success.
+
+### winget list fails during an agent run
+
+**Symptom**: A `winget` package resource raises `Cannot determine whether
+package '<id>' is installed: winget list failed this run` instead of
+installing or reporting a clean state.
+
+**Cause**: `winget list` itself returned a non-zero exit code or raised
+(transient winget/WinRT glitch, corrupted index, etc.). The provider
+deliberately refuses to treat this as "nothing installed" (which would
+trigger pointless, potentially disruptive reinstalls of packages that are
+actually already present) and instead fails the resource so the run is
+retried.
+
+**Solutions**:
+- Rerun the agent; this is usually transient
+- Run `winget list` by hand on the node to diagnose a persistent failure
+- Check `winget --info` / `winget --open-logs` for a corrupted source index
+
+### `winget::pin`, `winget::source`, `winget::configure` or `winget::settings` silently do nothing on the first run
+
+**Symptom**: No exec/file resource shows up in the report for one of these
+resources on a freshly bootstrapped node, with a `Puppet.warning` such as
+`winget::pin[...]: winget_path fact is not yet set (...)`.
+
+**Cause**: These resources are gated on `$facts['winget_path']`, which is
+`nil` until winget has actually run once on the node (e.g. mid-bootstrap,
+before the `winget_path` fact has a value to report). They converge
+automatically on the next run once the fact is populated.
+
+**Solution**: This is expected and now explicitly warned about instead of
+being silent; order these resources after the bootstrap class so they
+converge as soon as possible:
+
+```puppet
+Class['winget'] -> Winget::Pin <| |>
+Class['winget'] -> Winget::Source <| |>
+Class['winget'] -> Winget::Configure <| |>
+Class['winget'] -> Class['winget::settings']
+```
 
 ### winget bootstrap fails on Windows Server
 

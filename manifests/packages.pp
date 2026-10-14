@@ -50,7 +50,7 @@
 #   #     ensure: present
 #   #     scope: machine
 #   #   Microsoft.VisualStudioCode:
-#   #     ensure: latest
+#   #     ensure: '1.95.0'
 #   #     hold: true
 #   include winget::packages
 #   Class['winget'] -> Class['winget::packages']
@@ -94,6 +94,16 @@ class winget::packages (
 
     if $config['hold'] == true and ($ensure == 'absent' or $ensure == 'purged') {
       fail("winget::packages[${id}]: hold cannot be combined with ensure => '${ensure}'.")
+    }
+    if $config['hold'] == true and $ensure == 'latest' {
+      # A plain pin (`mark => hold`) only excludes the package from
+      # `winget upgrade --all`; it does NOT stop an explicit upgrade, and
+      # `ensure => latest` performs exactly that explicit upgrade on every
+      # run. Combined, the pin would be silently ineffective and the
+      # package would keep being upgraded despite `hold => true`. Pin the
+      # package to a specific version instead, or use a blocking
+      # `winget::pin` if the intent is to also refuse explicit upgrades.
+      fail("winget::packages[${id}]: hold => true has no effect combined with ensure => 'latest' (an explicit upgrade still runs every run); pin to a specific version, or use a blocking winget::pin instead.")
     }
     $mark_hash = $config['hold'] ? {
       true    => { 'mark' => 'hold' },

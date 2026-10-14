@@ -98,9 +98,20 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     def reset!
       @winget_path = nil
       @instances_list = nil
+      @list_unavailable = nil
       @pins_list = nil
       @suitability_warned = nil
       PuppetX::Winget::PathResolver.reset!
+    end
+
+    # Whether the most recent `winget list` attempt failed (non-zero exit
+    # or raised an error) while winget itself was suitable. When true, the
+    # installed package state for this run is unknown: `query` refuses to
+    # report "absent" so Puppet does not attempt spurious installs on top
+    # of packages that are, in fact, already there.
+    # @return [Boolean]
+    def list_unavailable?
+      @list_unavailable == true
     end
 
     # Clear the class-level `winget list` cache without touching the
@@ -251,9 +262,17 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   # The `mark` property (holdable feature, backed by `winget pin`) is only
   # reported when the resource manages it: plain package resources therefore
   # never pay for an extra `winget pin list` process.
+  # Raises when the last `winget list` attempt failed outright (see
+  # `self.list_unavailable?`): reporting "absent" in that case would make
+  # Puppet attempt a pointless (and potentially disruptive) reinstall of a
+  # package that may well already be present.
   # @return [Hash, nil] Current package properties or nil if not installed
   def query
     pkg = installed_entry
+    if self.class.list_unavailable?
+      raise Puppet::Error, _('Cannot determine whether package %{name} is installed: winget list failed this run') % { name: resource[:name] }
+    end
+
     return nil unless pkg
 
     result = {
@@ -336,28 +355,41 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
   # Get list of all installed packages via winget list, cached at class
   # level for the duration of the run. Use `clear_list_cache!` (or
-  # `reset!` in tests) to invalidate.
+  # `reset!` in tests) to invalidate. A failed `winget list` (non-zero
+  # exit, or a raised error) is never cached: `@list_unavailable` is set so
+  # `query` can refuse to report "absent" instead of silently treating a
+  # transient listing failure as "nothing installed" (which would make
+  # Puppet attempt pointless reinstalls of everything).
   # @return [Hash] Map of package id (lowercase) -> package info
   def self.instances_list
     return @instances_list if defined?(@instances_list) && !@instances_list.nil?
 
-    @instances_list = fetch_instances_list
+    result = fetch_instances_list
+    @list_unavailable = result.nil?
+    @instances_list = result
+    result || {}
   end
 
-  # Single uncached `winget list` run. Never raises: returns {} when
-  # winget is unsuitable or the listing fails.
-  # @return [Hash] Map of package id (lowercase) -> package info
+  # Single uncached `winget list` run.
+  # @return [Hash, nil] Map of package id (lowercase) -> package info when
+  #   winget is unsuitable (nothing to list) or the listing succeeded (an
+  #   empty Hash is a legitimate "nothing installed" result then); `nil`
+  #   when winget is suitable but the listing itself failed or raised, so
+  #   the caller can tell a real failure apart from a genuinely empty list.
   def self.fetch_instances_list
     return {} unless suitable?
 
     output = Puppet::Util::Execution.execute([winget_path, 'list', *PuppetX::Winget::Provider::LIST_FLAGS], failonfail: false, combine: true)
-    return {} unless output.exitstatus == PuppetX::Winget::Provider::EXIT_SUCCESS
+    unless output.exitstatus == PuppetX::Winget::Provider::EXIT_SUCCESS
+      Puppet.warning(_('winget list failed with exit code %{code}; installed package state is unknown this run, no changes will be attempted: %{output}') % { code: output.exitstatus, output: output })
+      return nil
+    end
 
     provider = new
     provider.parse_winget_list(output)
   rescue StandardError => e
-    Puppet.debug("winget list failed: #{e.message}")
-    {}
+    Puppet.warning(_('winget list failed: %{error}; installed package state is unknown this run, no changes will be attempted') % { error: e.message })
+    nil
   end
 
   # Get the set of pinned package IDs, cached at class level for the

@@ -689,6 +689,49 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       described_class.clear_list_cache!
       described_class.instances_list
     end
+
+    it 'does not cache a failed listing (non-zero exit) as an empty list' do
+      allow(Puppet).to receive(:warning)
+      expect(Puppet::Util::Execution).to receive(:execute).twice.and_return(
+        Puppet::Util::Execution::ProcessOutput.new('Internal error', 0x8A150001),
+      )
+      expect(described_class.instances_list).to eq({})
+      expect(described_class.list_unavailable?).to be true
+      # A second call retries instead of serving a cached empty result.
+      expect(described_class.instances_list).to eq({})
+    end
+
+    it 'does not cache a listing that raised' do
+      allow(Puppet).to receive(:warning)
+      allow(Puppet::Util::Execution).to receive(:execute).and_raise(StandardError.new('boom'))
+      expect(described_class.instances_list).to eq({})
+      expect(described_class.list_unavailable?).to be true
+    end
+
+    it 'marks the list available again once a listing succeeds' do
+      allow(Puppet).to receive(:warning)
+      allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        Puppet::Util::Execution::ProcessOutput.new('Internal error', 0x8A150001),
+      )
+      described_class.instances_list
+      expect(described_class.list_unavailable?).to be true
+
+      allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
+      )
+      described_class.instances_list
+      expect(described_class.list_unavailable?).to be false
+    end
+
+    it 'query raises instead of reporting absent when the listing failed' do
+      allow(Puppet).to receive(:warning)
+      allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        Puppet::Util::Execution::ProcessOutput.new('Internal error', 0x8A150001),
+      )
+      resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: :installed, provider: :winget)
+      provider = described_class.new(resource)
+      expect { provider.query }.to raise_error(Puppet::Error, %r{Cannot determine whether package})
+    end
   end
 
   describe '.prefetch' do

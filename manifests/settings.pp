@@ -20,6 +20,12 @@
 #
 #   Class['winget'] -> Class['winget::settings']
 #
+# The managed file is replaced wholesale on every run: `settings` and
+# `experimental_features` are NOT merged with whatever settings.json
+# already contains on the node, they fully define its content. Declare
+# every key you care about (including ones a previous manual `winget
+# settings` edit may have set) or they will be dropped.
+#
 # @param settings
 #   Arbitrary settings.json content merged as-is (e.g.
 #   `{ 'telemetry' => { 'disable' => true } }`).
@@ -62,13 +68,36 @@ class winget::settings (
     default => $settings_path,
   }
 
+  # Fully qualified PowerShell: exec commands must be qualified and the
+  # winget alias is unavailable in the SYSTEM context.
+  $powershell = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
+
+  # The LocalState directory under the SYSTEM profile is created by winget
+  # itself the first time it runs; on a freshly bootstrapped node (or a
+  # custom $settings_path) it may not exist yet, which would otherwise make
+  # the `file` resource below fail with "parent directory does not exist".
+  $parent_dir = regsubst($resolved_path, '/[^/]+$', '')
+
   if $facts['winget_path'] {
+    exec { 'winget-settings-ensure-localstate-dir':
+      command => "${powershell} -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '${parent_dir}' | Out-Null\"",
+      unless  => "${powershell} -NoProfile -Command \"if (Test-Path -LiteralPath '${parent_dir}') { exit 0 } else { exit 1 }\"",
+      timeout => 60,
+    }
+
     # Rendered with inline_template (core function) rather than to_json so
     # this module keeps zero dependencies (no stdlib required for offline
-    # Windows fleets).
+    # Windows fleets). The full file is overwritten on every run; see the
+    # class documentation above.
     file { $resolved_path:
       ensure  => file,
       content => inline_template('<%= require "json"; JSON.generate(@merged) %>'),
+      require => Exec['winget-settings-ensure-localstate-dir'],
     }
+  } else {
+    # $facts['winget_path'] is nil until winget has run once (e.g. a fresh
+    # node mid-bootstrap): silently skipping would hide this class until a
+    # later run with no trace in the report.
+    warning('winget::settings: winget_path fact is not yet set (winget not bootstrapped on this node yet); settings.json will be managed on a later run once the fact is present. Order this class after Class[\'winget\'] to avoid surprises.')
   }
 }

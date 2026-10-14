@@ -255,7 +255,7 @@ Ordering with the bootstrap class is done at the call site:
 #     ensure: present
 #     scope: machine
 #   Microsoft.VisualStudioCode:
-#     ensure: latest
+#     ensure: '1.95.0'
 #     hold: true
 include winget::packages
 Class['winget'] -> Class['winget::packages']
@@ -334,6 +334,12 @@ Nothing is managed while winget itself is absent (fresh bootstrap): order
 settings after the bootstrap class:
 
   Class['winget'] -> Class['winget::settings']
+
+The managed file is replaced wholesale on every run: `settings` and
+`experimental_features` are NOT merged with whatever settings.json
+already contains on the node, they fully define its content. Declare
+every key you care about (including ones a previous manual `winget
+settings` edit may have set) or they will be dropped.
 
 #### Examples
 
