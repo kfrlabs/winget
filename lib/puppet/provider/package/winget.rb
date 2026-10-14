@@ -41,7 +41,7 @@ unless defined?(::PuppetX::Winget::Provider::EXIT_SUCCESS)
         EXIT_INSTALL_ALREADY_INSTALLED = 0x8A15010D  # Another version of this application is already installed
         EXIT_INSTALL_REBOOT_REQUIRED_TO_FINISH = 0x8A150109 # Restart your PC to finish installation
         EXIT_INSTALL_REBOOT_REQUIRED_FOR_INSTALL = 0x8A15010A # Installation failed. Restart your PC then try again
-        EXIT_INSTALL_REBOOT_INITIATED = 0x8A15010B    # Your PC will restart to finish installation
+        EXIT_INSTALL_REBOOT_INITIATED = 0x8A15010B # Your PC will restart to finish installation
         EXIT_INSTALL_CANCELLED_BY_USER = 0x8A15010C  # You cancelled the installation
         EXIT_INSTALL_BLOCKED_BY_POLICY = 0x8A15010F  # Organization policies are preventing installation
         # Kept for callers referencing the previous name: upgrade of an
@@ -573,11 +573,8 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
       # (not in any source), or absent package for uninstall/upgrade.
       # (`update` intercepts this code before reaching here and falls back
       # to `install`, so upgrade only lands here in edge cases.)
-      if action == 'install'
-        raise Puppet::Error, _('Package \'%{name}\' not found in winget source') % { name: resource[:name] }
-      else
-        raise Puppet::Error, _('Package \'%{name}\' is not installed') % { name: resource[:name] }
-      end
+      raise Puppet::Error, _('Package \'%{name}\' not found in winget source') % { name: resource[:name] } if action == 'install'
+      raise Puppet::Error, _('Package \'%{name}\' is not installed') % { name: resource[:name] }
     when PuppetX::Winget::Provider::EXIT_NO_MANIFEST_FOUND
       raise Puppet::Error, _('Package \'%{name}\' not found in winget source') % { name: resource[:name] }
     when PuppetX::Winget::Provider::EXIT_NO_APPLICABLE_INSTALLER
