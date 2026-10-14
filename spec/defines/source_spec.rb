@@ -71,9 +71,19 @@ describe 'winget::source' do
 
     it { is_expected.to compile.with_all_deps }
 
-    it 'passes the unwrapped header to source add' do
+    it 'never puts the unwrapped header on the command line' do
+      command = catalogue.resource('Exec', 'winget-source-add-sensitive-source')[:command]
+      expect(command).not_to match(%r{s3cr3t})
+    end
+
+    it 'references the header via an environment variable in the command' do
       is_expected.to contain_exec('winget-source-add-sensitive-source')
-        .with_command(%r{--header 's3cr3t'})
+        .with_command(%r{--header \$env:WINGET_SOURCE_HEADER})
+    end
+
+    it 'passes the unwrapped header through the environment parameter only' do
+      is_expected.to contain_exec('winget-source-add-sensitive-source')
+        .with_environment(['WINGET_SOURCE_HEADER=s3cr3t'])
     end
   end
 

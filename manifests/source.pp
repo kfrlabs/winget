@@ -74,10 +74,17 @@ define winget::source (
         true    => ' --explicit',
         default => '',
       }
+      # The header value never appears on the command line (visible in
+      # debug logs, process listings and failure reports): it is passed to
+      # the child process via an environment variable instead. `$env:...`
+      # is written in a single-quoted Puppet string (no interpolation) so
+      # it reaches PowerShell untouched and is resolved there, at runtime.
       if $header {
-        $header_flag = " --header '${header.unwrap}'"
+        $header_flag = ' --header $env:WINGET_SOURCE_HEADER'
+        $header_environment = ["WINGET_SOURCE_HEADER=${header.unwrap}"]
       } else {
         $header_flag = ''
+        $header_environment = []
       }
       $agreements_flag = $accept_source_agreements ? {
         true    => ' --accept-source-agreements',
@@ -85,9 +92,10 @@ define winget::source (
       }
 
       exec { "winget-source-add-${title}":
-        command => "${powershell} -NoProfile -Command \"& '${winget}' source add --name '${title}' --arg '${url}'${type_flag}${trust_flag}${explicit_flag}${header_flag}${agreements_flag} --disable-interactivity\"",
-        unless  => $listed_check,
-        timeout => 300,
+        command     => "${powershell} -NoProfile -Command \"& '${winget}' source add --name '${title}' --arg '${url}'${type_flag}${trust_flag}${explicit_flag}${header_flag}${agreements_flag} --disable-interactivity\"",
+        unless      => $listed_check,
+        environment => $header_environment,
+        timeout     => 300,
       }
     } else {
       exec { "winget-source-remove-${title}":
@@ -96,5 +104,10 @@ define winget::source (
         timeout => 300,
       }
     }
+  } else {
+    # $facts['winget_path'] is nil until winget has run once (e.g. a
+    # fresh node mid-bootstrap): silently skipping would hide this
+    # source until a later run with no trace in the report.
+    warning("winget::source[${title}]: winget_path fact is not yet set (winget not bootstrapped on this node yet); this source will be added on a later run once the fact is present. Order sources after Class['winget'] to avoid surprises.")
   }
 }
