@@ -7,13 +7,79 @@
 ### Classes
 
 * [`winget`](#winget): == Class: winget  This class manages the installation and configuration of the Windows Package Manager (winget). It ensures winget is availab
+* [`winget::packages`](#winget--packages): Declare winget packages from a Hiera-friendly hash.
+* [`winget::settings`](#winget--settings): Manage the winget client configuration (settings.json).
+* [`winget::sources`](#winget--sources): Manage winget package sources from a Hiera-friendly hash.
 * [`winget::upgrade`](#winget--upgrade): Upgrades every winget package with an available update.
 
 ### Defined types
 
+* [`winget::configure`](#winget--configure): Apply a winget configuration file (`winget configure`).
 * [`winget::install::github`](#winget--install--github): == Define: winget::install::github  Installs winget from GitHub releases by downloading the AppX/MSIX bundle and installing it with Add-AppxP
 * [`winget::install::local`](#winget--install--local): == Define: winget::install::local  Installs winget from a local AppX/MSIX/MSIXBundle file. Use this for offline installation where no interne
 * [`winget::install::msstore`](#winget--install--msstore): == Define: winget::install::msstore  Installs winget from the Microsoft CDN distribution of App Installer (`https://aka.ms/getwinget`, a .msi
+* [`winget::pin`](#winget--pin): Pin (hold) a winget package against unattended upgrades.
+* [`winget::source`](#winget--source): Manage a single winget package source.
+
+### Data types
+
+* [`Winget::Package`](#Winget--Package): Structured declaration of a single winget package.
+Value type of `Winget::PackagesHash` (see `winget::packages`). Every key is
+optional. `ensure`, `install_options`, `uninstall_options` and `schedule`
+map to `package` resource attributes; `source`, `scope`, `architecture`,
+`location`, `override`, `installer_type` and `locale` are translated into
+`winget install`/`winget upgrade` flags; `hold` maps to the `mark`
+property (`winget pin add` / `winget pin remove`).
+* [`Winget::PackagesHash`](#Winget--PackagesHash): Hash of winget packages for `winget::packages`.
+Keys are winget package IDs. Values are either a shorthand ensure string
+(`'installed'`, `'latest'`, `'2.40.0'`, `'absent'`, ...) or a full
+`Winget::Package` hash. Designed for Hiera (`winget::packages::packages`):
+
+```yaml
+winget::packages::packages:
+  Git.Git:
+    ensure: present
+    scope: machine
+  Microsoft.VisualStudioCode:
+    ensure: latest
+```
+
+Named `PackagesHash` (rather than `Packages`) because Puppet folds
+definition names case-insensitively: `Winget::Packages` would collide
+with the `winget::packages` class.
+* [`Winget::SourceEntry`](#Winget--SourceEntry): Structured declaration of a single winget package source.
+Value type of `Winget::SourcesHash` (see `winget::sources` and
+`winget::source`). `url` maps to `winget source add --arg`; `source_type`
+to `--type` (`Microsoft.PreIndexed.Package` or `Microsoft.Rest` for
+private REST sources); `trust_level` to `--trust-level`; `explicit` to
+`--explicit`; `header` to `--header` (REST source HTTP header, kept
+`Sensitive` so it never lands in logs or reports).
+
+Named `SourceEntry` (rather than `Source`) because Puppet folds
+definition names case-insensitively: `Winget::Source` would collide with
+the `winget::source` defined type.
+* [`Winget::SourcesHash`](#Winget--SourcesHash): Hash of winget package sources for `winget::sources`.
+Keys are winget source names. Values are either a shorthand URL string
+(added as a default source) or a full `Winget::SourceEntry` hash.
+Designed for Hiera (`winget::sources::sources`):
+
+```yaml
+winget::sources::sources:
+  contoso: https://winget.contoso.example.com/cache
+  partners:
+    url: https://winget.partners.example.com/cache
+    source_type: Microsoft.Rest
+    trust_level: trusted
+```
+
+Named `SourcesHash` (rather than `Sources`) because Puppet folds
+definition names case-insensitively: `Winget::Sources` would collide
+with the `winget::sources` class.
+
+### Tasks
+
+* [`list_upgrades`](#list_upgrades): List winget packages with available upgrades (read-only, makes no changes). For on-demand inventory outside Puppet agent runs.
+* [`upgrade_now`](#upgrade_now): Upgrade winget packages immediately (on-demand, outside Puppet agent runs). Upgrades the given IDs, or every package with an available upgrad
 
 ## Classes
 
@@ -149,6 +215,252 @@ while keeping the provider available. Default: true.
 
 Default value: `true`
 
+### <a name="winget--packages"></a>`winget::packages`
+
+Reads package declarations from the `packages` hash (automatic Hiera lookup
+via `winget::packages::packages`, see `Winget::PackagesHash`) and declares one
+`package` resource with the winget provider per entry. Entries accept either
+a shorthand ensure string or a full `Winget::Package` hash:
+
+- `ensure`, `install_options`, `uninstall_options` and `schedule` map to
+  `package` resource attributes.
+- `source`, `scope`, `architecture`, `location`, `override`,
+  `installer_type` and `locale` are translated into `winget install` /
+  `winget upgrade` flags (appended before any extra `install_options`).
+- `hold` maps to the `mark` property, i.e. `winget pin add/remove` via the
+  provider `holdable` feature (see `winget::pin` for blocking/gating pins).
+
+A package already declared elsewhere in the catalog (e.g. `package {
+'Git.Git': ensure => present }`) is left alone: redeclaring it would be a
+duplicate-declaration error. Declare `winget::packages` after your own
+`package` resources.
+
+Scope note: the Puppet agent runs as SYSTEM. Packages installed with the
+default (user) scope are invisible to `winget list` under SYSTEM, so prefer
+`scope => 'machine'` for agent-managed packages (or set the matching
+`installBehavior` preference via `winget::settings`).
+
+Ordering with the bootstrap class is done at the call site:
+
+  Class['winget'] -> Class['winget::packages']
+
+#### Examples
+
+##### Manage packages from Hiera
+
+```puppet
+# hiera.yaml:
+# winget::packages::packages:
+#   Git.Git:
+#     ensure: present
+#     scope: machine
+#   Microsoft.VisualStudioCode:
+#     ensure: latest
+#     hold: true
+include winget::packages
+Class['winget'] -> Class['winget::packages']
+```
+
+##### Structured install parameters
+
+```puppet
+class { 'winget::packages':
+  packages => {
+    'Git.Git' => {
+      ensure       => '2.44.0',
+      scope        => 'machine',
+      architecture => 'x64',
+      source       => 'winget',
+    },
+  },
+}
+```
+
+#### Parameters
+
+The following parameters are available in the `winget::packages` class:
+
+* [`packages`](#-winget--packages--packages)
+* [`schedule`](#-winget--packages--schedule)
+* [`reboot_resource`](#-winget--packages--reboot_resource)
+
+##### <a name="-winget--packages--packages"></a>`packages`
+
+Data type: `Winget::PackagesHash`
+
+Packages to manage, keyed by winget ID. Values are either a shorthand
+ensure string or a `Winget::Package` hash.
+
+Default value: `{}`
+
+##### <a name="-winget--packages--schedule"></a>`schedule`
+
+Data type: `Optional[String[1]]`
+
+Default Puppet `schedule` applied as metaparameter to every managed
+package. A per-package `schedule` key overrides it. Undef (default) means
+no schedule: packages are enforced on every agent run.
+
+Default value: `undef`
+
+##### <a name="-winget--packages--reboot_resource"></a>`reboot_resource`
+
+Data type: `Optional[String[1]]`
+
+Optional title of a `reboot` resource (puppetlabs/reboot, declared by the
+caller) notified by every managed package, so a pending reboot requested
+by an installer (winget exit `0x8A150003`) is honored. Undef (default)
+means no reboot wiring: installs still succeed with a warning, exactly
+like the provider default.
+
+Default value: `undef`
+
+### <a name="winget--settings"></a>`winget::settings`
+
+Writes `%LOCALAPPDATA%/Packages/Microsoft.DesktopAppInstaller_*/LocalState/settings.json`
+for the Puppet agent account (SYSTEM by default, i.e.
+`C:/Windows/System32/config/systemprofile/...`), merging `settings` with
+`experimental_features` under the `experimentalFeatures` key. Accepts any
+documented winget setting (`source.autoUpdateIntervalInMinutes`,
+`installBehavior.preferences.scope`, `telemetry.disable`, ...): see
+`winget settings` and https://aka.ms/winget-settings.
+
+This is also where the fleet-wide install scope belongs: with the agent
+running as SYSTEM, `installBehavior.preferences.scope => 'machine'` keeps
+agent-driven installs visible to `winget list` without repeating
+`scope => 'machine'` on every package (see `winget::packages`).
+
+Nothing is managed while winget itself is absent (fresh bootstrap): order
+settings after the bootstrap class:
+
+  Class['winget'] -> Class['winget::settings']
+
+#### Examples
+
+##### Disable telemetry and prefer machine scope
+
+```puppet
+class { 'winget::settings':
+  settings => {
+    'telemetry'       => { 'disable' => true },
+    'installBehavior' => { 'preferences' => { 'scope' => 'machine' } },
+  },
+}
+```
+
+##### Enable an experimental feature
+
+```puppet
+class { 'winget::settings':
+  experimental_features => { 'resume' => true },
+}
+```
+
+#### Parameters
+
+The following parameters are available in the `winget::settings` class:
+
+* [`settings`](#-winget--settings--settings)
+* [`experimental_features`](#-winget--settings--experimental_features)
+* [`settings_path`](#-winget--settings--settings_path)
+
+##### <a name="-winget--settings--settings"></a>`settings`
+
+Data type: `Hash`
+
+Arbitrary settings.json content merged as-is (e.g.
+`{ 'telemetry' => { 'disable' => true } }`).
+
+Default value: `{}`
+
+##### <a name="-winget--settings--experimental_features"></a>`experimental_features`
+
+Data type: `Hash`
+
+Experimental features merged under the `experimentalFeatures` key,
+overriding any `experimentalFeatures` entry of `settings`.
+
+Default value: `{}`
+
+##### <a name="-winget--settings--settings_path"></a>`settings_path`
+
+Data type: `Optional[String]`
+
+Explicit settings.json path (e.g. to manage another user's file).
+Undef (default) manages the SYSTEM profile file used by the agent.
+
+Default value: `undef`
+
+### <a name="winget--sources"></a>`winget::sources`
+
+Reads source declarations from the `sources` hash (automatic Hiera lookup
+via `winget::sources::sources`, see `Winget::SourcesHash`) and declares one
+`winget::source` resource per entry. Entries accept either a shorthand URL
+string or a full `Winget::SourceEntry` hash (private REST sources, trust level,
+explicit sources, auth headers).
+
+With `reset_defaults => true`, non-default sources missing from `sources`
+are removed first (`winget source reset --force`, idempotent guard included),
+then the declared sources are added. The defaults themselves
+(`msstore`, `winget`, `winget-font`, overridable via `default_sources`) are
+never removed.
+
+Nothing is declared while winget itself is absent (fresh bootstrap): order
+sources after the bootstrap class so they converge on the next run:
+
+  Class['winget'] -> Class['winget::sources']
+
+#### Examples
+
+##### Private REST source from Hiera
+
+```puppet
+# hiera.yaml:
+# winget::sources::sources:
+#   contoso:
+#     url: https://winget.contoso.example.com/cache
+#     source_type: Microsoft.Rest
+#     trust_level: trusted
+include winget::sources
+Class['winget'] -> Class['winget::sources']
+```
+
+#### Parameters
+
+The following parameters are available in the `winget::sources` class:
+
+* [`sources`](#-winget--sources--sources)
+* [`reset_defaults`](#-winget--sources--reset_defaults)
+* [`default_sources`](#-winget--sources--default_sources)
+
+##### <a name="-winget--sources--sources"></a>`sources`
+
+Data type: `Winget::SourcesHash`
+
+Sources to manage, keyed by source name. Values are either a shorthand
+URL string or a `Winget::SourceEntry` hash.
+
+Default value: `{}`
+
+##### <a name="-winget--sources--reset_defaults"></a>`reset_defaults`
+
+Data type: `Boolean`
+
+Whether to reset winget sources to the defaults plus `sources`
+(`winget source reset --force`) before adding declared sources.
+Default: false (unmanaged sources are left alone).
+
+Default value: `false`
+
+##### <a name="-winget--sources--default_sources"></a>`default_sources`
+
+Data type: `Array[String[1]]`
+
+Source names treated as defaults by the reset guard. Default:
+`['msstore', 'winget', 'winget-font']`.
+
+Default value: `['msstore', 'winget', 'winget-font']`
+
 ### <a name="winget--upgrade"></a>`winget::upgrade`
 
 Reads package IDs from the `winget_upgrades` fact and declares one `package`
@@ -185,15 +497,20 @@ Ordering with the bootstrap class is done at the call site:
 include winget::upgrade
 ```
 
-##### Weekly window with exclusions
+##### Weekly window with exclusions, pins respected, reboot wired
 
 ```puppet
+reboot { 'maintenance-reboot':
+  when => pending,
+}
+
 class { 'winget::upgrade':
   exclude          => ['Google.Chrome'],
   manage_schedule  => true,
   schedule_period  => 'weekly',
   schedule_weekday => 'Sunday',
   schedule_range   => '3 - 5',
+  reboot_resource  => 'maintenance-reboot',
 }
 ```
 
@@ -218,6 +535,8 @@ The following parameters are available in the `winget::upgrade` class:
 
 * [`exclude`](#-winget--upgrade--exclude)
 * [`only`](#-winget--upgrade--only)
+* [`respect_pins`](#-winget--upgrade--respect_pins)
+* [`reboot_resource`](#-winget--upgrade--reboot_resource)
 * [`schedule`](#-winget--upgrade--schedule)
 * [`manage_schedule`](#-winget--upgrade--manage_schedule)
 * [`schedule_name`](#-winget--upgrade--schedule_name)
@@ -242,6 +561,30 @@ When non-empty, upgrade only these winget IDs (case-insensitive).
 Combined with `exclude`: an ID must be in `only` and not in `exclude`.
 
 Default value: `[]`
+
+##### <a name="-winget--upgrade--respect_pins"></a>`respect_pins`
+
+Data type: `Boolean`
+
+Whether pinned packages (`winget pin`, see the `winget_pins` fact and
+`winget::pin`) are skipped. Default: true. This is the upgrade-side
+counterpart of the provider `holdable` feature and is more robust than
+`exclude` alone: pins travel with the node, not with this declaration.
+Set to false to upgrade pinned packages explicitly.
+
+Default value: `true`
+
+##### <a name="-winget--upgrade--reboot_resource"></a>`reboot_resource`
+
+Data type: `Optional[String[1]]`
+
+Optional title of a `reboot` resource (puppetlabs/reboot, declared by the
+caller) notified by every managed package, so a pending reboot requested
+by an installer (winget exit `0x8A150003`) is honored. Undef (default)
+means no reboot wiring: upgrades still succeed with a warning, exactly
+like the provider default.
+
+Default value: `undef`
 
 ##### <a name="-winget--upgrade--schedule"></a>`schedule`
 
@@ -310,6 +653,54 @@ the window.
 Default value: `1`
 
 ## Defined types
+
+### <a name="winget--configure"></a>`winget::configure`
+
+Applies a Desired State Configuration file (`.winget` / `.win-get.yaml`,
+see `winget configure`) idempotently: the `exec` is skipped while
+`winget configure test` reports the system in the desired state. Use this
+for machine configuration winget handles natively (e.g. installing a tool
+set alongside registry or package settings) instead of hand-rolled `exec`
+resources.
+
+Nothing is declared while winget itself is absent (fresh bootstrap): order
+configurations after the bootstrap class:
+
+  Class['winget'] -> Winget::Configure <| |>
+
+#### Examples
+
+##### Apply a baseline configuration
+
+```puppet
+winget::configure { 'C:/Configs/workstation.winget':
+}
+```
+
+#### Parameters
+
+The following parameters are available in the `winget::configure` defined type:
+
+* [`source`](#-winget--configure--source)
+* [`accept_configuration_agreements`](#-winget--configure--accept_configuration_agreements)
+
+##### <a name="-winget--configure--source"></a>`source`
+
+Data type: `String`
+
+Path or HTTPS URL of the configuration file (`winget configure -f`).
+Defaults to the resource title.
+
+Default value: `$title`
+
+##### <a name="-winget--configure--accept_configuration_agreements"></a>`accept_configuration_agreements`
+
+Data type: `Boolean`
+
+Whether to pass `--accept-configuration-agreements`. Default: true
+(required for non-interactive agent runs).
+
+Default value: `true`
 
 ### <a name="winget--install--github"></a>`winget::install::github`
 
@@ -520,4 +911,329 @@ Data type: `Integer`
 Seconds between retry attempts. Default: 10.
 
 Default value: `10`
+
+### <a name="winget--pin"></a>`winget::pin`
+
+Manages `winget pin add/remove` for a single package ID. This covers the
+advanced pin flavors the provider `holdable` feature (`mark => hold`, plain
+pinning) does not: blocking pins (`blocking => true`, which also block
+explicit `winget upgrade --id` unless `--force` is used) and gating pins
+(`version => '1.2.*'`, which restrict upgrades to a version range).
+
+A plain (non-blocking, unversioned) pin excludes the package from
+`winget upgrade --all` while still allowing explicit upgrades, which is
+exactly the `mark => hold` semantic; `winget::upgrade` additionally skips
+pinned IDs automatically (`respect_pins`, backed by the `winget_pins` fact).
+Do not combine a blocking pin with `ensure => latest` on the same package:
+the explicit upgrade would fail until the pin is removed.
+
+The pin presence guard is ID-based: changing `version` or `blocking` on an
+existing pin requires removing it first (`ensure => absent`, then
+`present` again).
+
+Nothing is declared while winget itself is absent (fresh bootstrap): order
+pins after the bootstrap class so they converge on the next run:
+
+  Class['winget'] -> Winget::Pin <| |>
+
+#### Examples
+
+##### Hold back Chrome with a blocking pin
+
+```puppet
+winget::pin { 'Google.Chrome':
+  ensure   => present,
+  blocking => true,
+}
+```
+
+##### Gate PowerToys to the 0.70 patch range
+
+```puppet
+winget::pin { 'Microsoft.PowerToys':
+  ensure  => present,
+  version => '0.70.*',
+}
+```
+
+#### Parameters
+
+The following parameters are available in the `winget::pin` defined type:
+
+* [`ensure`](#-winget--pin--ensure)
+* [`version`](#-winget--pin--version)
+* [`blocking`](#-winget--pin--blocking)
+* [`source`](#-winget--pin--source)
+
+##### <a name="-winget--pin--ensure"></a>`ensure`
+
+Data type: `Enum['present', 'absent']`
+
+Whether the pin exists (`present`) or not (`absent`).
+
+Default value: `'present'`
+
+##### <a name="-winget--pin--version"></a>`version`
+
+Data type: `Optional[String[1]]`
+
+Optional gating version (`'1.2.3'` or range `'1.2.*'`). Undef (default)
+means a plain pin without version gating.
+
+Default value: `undef`
+
+##### <a name="-winget--pin--blocking"></a>`blocking`
+
+Data type: `Boolean`
+
+Whether the pin blocks even explicit upgrades. Default: false (plain
+pinning: only `upgrade --all` skips the package).
+
+Default value: `false`
+
+##### <a name="-winget--pin--source"></a>`source`
+
+Data type: `Optional[String[1]]`
+
+Optional source scoping the pin (`--source`). Undef (default) means all
+sources.
+
+Default value: `undef`
+
+### <a name="winget--source"></a>`winget::source`
+
+Wraps `winget source add/remove` for one source (title is the source name).
+This is how enterprise private sources (e.g. an internal
+`Microsoft.Rest` source) are declared:
+
+  winget::source { 'contoso':
+    url         => 'https://winget.contoso.example.com/cache',
+    source_type => 'Microsoft.Rest',
+    trust_level => 'trusted',
+  }
+
+Nothing is declared while winget itself is absent (fresh bootstrap): order
+sources after the bootstrap class so they converge on the next run:
+
+  Class['winget'] -> Winget::Source <| |>
+
+#### Parameters
+
+The following parameters are available in the `winget::source` defined type:
+
+* [`ensure`](#-winget--source--ensure)
+* [`url`](#-winget--source--url)
+* [`source_type`](#-winget--source--source_type)
+* [`trust_level`](#-winget--source--trust_level)
+* [`explicit`](#-winget--source--explicit)
+* [`header`](#-winget--source--header)
+* [`accept_source_agreements`](#-winget--source--accept_source_agreements)
+
+##### <a name="-winget--source--ensure"></a>`ensure`
+
+Data type: `Enum['present', 'absent']`
+
+Whether the source exists (`present`) or not (`absent`).
+
+Default value: `'present'`
+
+##### <a name="-winget--source--url"></a>`url`
+
+Data type: `Optional[String[1]]`
+
+Source URL or UNC (`winget source add --arg`). Required when
+`ensure => present`.
+
+Default value: `undef`
+
+##### <a name="-winget--source--source_type"></a>`source_type`
+
+Data type: `Optional[String[1]]`
+
+Source type (`winget source add --type`): `Microsoft.PreIndexed.Package`
+(default) or `Microsoft.Rest`. Undef (default) lets winget decide.
+
+Default value: `undef`
+
+##### <a name="-winget--source--trust_level"></a>`trust_level`
+
+Data type: `Optional[Enum['none', 'trusted']]`
+
+Source trust level (`--trust-level`): `none` or `trusted`. Undef
+(default) leaves the winget default.
+
+Default value: `undef`
+
+##### <a name="-winget--source--explicit"></a>`explicit`
+
+Data type: `Boolean`
+
+Whether the source is explicit (`--explicit`): explicit sources must be
+targeted with `--source` on every command. Default: false. Changing this
+on an existing source is not enforced (remove and re-add instead).
+
+Default value: `false`
+
+##### <a name="-winget--source--header"></a>`header`
+
+Data type: `Optional[Sensitive[String[1]]]`
+
+Optional REST source HTTP header (`--header`). `Sensitive` so the value
+never lands in logs or reports.
+
+Default value: `undef`
+
+##### <a name="-winget--source--accept_source_agreements"></a>`accept_source_agreements`
+
+Data type: `Boolean`
+
+Whether to pass `--accept-source-agreements` when adding the source.
+Default: true (required for non-interactive agent runs).
+
+Default value: `true`
+
+## Data types
+
+### <a name="Winget--Package"></a>`Winget::Package`
+
+Structured declaration of a single winget package.
+Value type of `Winget::PackagesHash` (see `winget::packages`). Every key is
+optional. `ensure`, `install_options`, `uninstall_options` and `schedule`
+map to `package` resource attributes; `source`, `scope`, `architecture`,
+`location`, `override`, `installer_type` and `locale` are translated into
+`winget install`/`winget upgrade` flags; `hold` maps to the `mark`
+property (`winget pin add` / `winget pin remove`).
+
+Alias of
+
+```puppet
+Struct[{
+  Optional['ensure']            => Variant[Enum['present', 'installed', 'absent', 'purged', 'latest'], String[1]],
+  Optional['source']            => String[1],
+  Optional['scope']             => Enum['user', 'machine'],
+  Optional['architecture']      => Enum['x86', 'x64', 'arm', 'arm64'],
+  Optional['location']          => String[1],
+  Optional['override']          => String[1],
+  Optional['installer_type']    => String[1],
+  Optional['locale']            => String[1],
+  Optional['hold']              => Boolean,
+  Optional['install_options']   => Array,
+  Optional['uninstall_options'] => Array,
+  Optional['schedule']          => String[1],
+}]
+```
+
+### <a name="Winget--PackagesHash"></a>`Winget::PackagesHash`
+
+Hash of winget packages for `winget::packages`.
+Keys are winget package IDs. Values are either a shorthand ensure string
+(`'installed'`, `'latest'`, `'2.40.0'`, `'absent'`, ...) or a full
+`Winget::Package` hash. Designed for Hiera (`winget::packages::packages`):
+
+```yaml
+winget::packages::packages:
+  Git.Git:
+    ensure: present
+    scope: machine
+  Microsoft.VisualStudioCode:
+    ensure: latest
+```
+
+Named `PackagesHash` (rather than `Packages`) because Puppet folds
+definition names case-insensitively: `Winget::Packages` would collide
+with the `winget::packages` class.
+
+Alias of `Hash[String[1], Variant[String[1], Winget::Package]]`
+
+### <a name="Winget--SourceEntry"></a>`Winget::SourceEntry`
+
+Structured declaration of a single winget package source.
+Value type of `Winget::SourcesHash` (see `winget::sources` and
+`winget::source`). `url` maps to `winget source add --arg`; `source_type`
+to `--type` (`Microsoft.PreIndexed.Package` or `Microsoft.Rest` for
+private REST sources); `trust_level` to `--trust-level`; `explicit` to
+`--explicit`; `header` to `--header` (REST source HTTP header, kept
+`Sensitive` so it never lands in logs or reports).
+
+Named `SourceEntry` (rather than `Source`) because Puppet folds
+definition names case-insensitively: `Winget::Source` would collide with
+the `winget::source` defined type.
+
+Alias of
+
+```puppet
+Struct[{
+  Optional['ensure']                   => Enum['present', 'absent'],
+  Optional['url']                      => String[1],
+  Optional['source_type']              => String[1],
+  Optional['trust_level']              => Enum['none', 'trusted'],
+  Optional['explicit']                 => Boolean,
+  Optional['header']                   => Sensitive[String[1]],
+  Optional['accept_source_agreements'] => Boolean,
+}]
+```
+
+### <a name="Winget--SourcesHash"></a>`Winget::SourcesHash`
+
+Hash of winget package sources for `winget::sources`.
+Keys are winget source names. Values are either a shorthand URL string
+(added as a default source) or a full `Winget::SourceEntry` hash.
+Designed for Hiera (`winget::sources::sources`):
+
+```yaml
+winget::sources::sources:
+  contoso: https://winget.contoso.example.com/cache
+  partners:
+    url: https://winget.partners.example.com/cache
+    source_type: Microsoft.Rest
+    trust_level: trusted
+```
+
+Named `SourcesHash` (rather than `Sources`) because Puppet folds
+definition names case-insensitively: `Winget::Sources` would collide
+with the `winget::sources` class.
+
+Alias of `Hash[String[1], Variant[String[1], Winget::SourceEntry]]`
+
+## Tasks
+
+### <a name="list_upgrades"></a>`list_upgrades`
+
+List winget packages with available upgrades (read-only, makes no changes). For on-demand inventory outside Puppet agent runs.
+
+**Supports noop?** false
+
+#### Parameters
+
+##### `include_pinned`
+
+Data type: `Optional[Boolean]`
+
+Include pinned packages in the listing. By default pinned packages are still listed (use `upgrade_now` without `include_pinned` to skip them during upgrades).
+
+### <a name="upgrade_now"></a>`upgrade_now`
+
+Upgrade winget packages immediately (on-demand, outside Puppet agent runs). Upgrades the given IDs, or every package with an available upgrade when `ids` is empty.
+
+**Supports noop?** false
+
+#### Parameters
+
+##### `ids`
+
+Data type: `Optional[Array[String]]`
+
+Winget IDs to upgrade. When empty, every package with an available upgrade is processed (minus `exclude`).
+
+##### `exclude`
+
+Data type: `Optional[Array[String]]`
+
+Winget IDs to skip (case-insensitive). Only used when `ids` is empty.
+
+##### `include_pinned`
+
+Data type: `Optional[Boolean]`
+
+Also upgrade pinned packages when enumerating all upgrades. Explicit `ids` are always upgraded (a blocking pin still fails the package).
 

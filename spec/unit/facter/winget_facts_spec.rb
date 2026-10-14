@@ -6,11 +6,13 @@ require 'puppet_x/winget/facts'
 RSpec.describe PuppetX::Winget::Facts do
   before(:each) do
     PuppetX::Winget::PathResolver.reset!
+    described_class.reset!
     described_class.instance_variable_set(:@winget_path, nil) if described_class.instance_variable_defined?(:@winget_path)
   end
 
   after(:each) do
     PuppetX::Winget::PathResolver.reset!
+    described_class.reset!
   end
 
   describe '.winget_path' do
@@ -177,6 +179,18 @@ RSpec.describe PuppetX::Winget::Facts do
       content = File.read(File.join(lib_root, 'facter', 'winget_upgrades.rb'))
       expect(content).to include("Facter.add('winget_upgrades')")
       expect(content).to include('PuppetX::Winget::Facts.winget_upgrades')
+    end
+
+    it 'defines a winget_upgrades_detail fact confined to windows that delegates to the helper' do
+      content = File.read(File.join(lib_root, 'facter', 'winget_upgrades_detail.rb'))
+      expect(content).to include("Facter.add('winget_upgrades_detail')")
+      expect(content).to include('PuppetX::Winget::Facts.upgrade_details')
+    end
+
+    it 'defines a winget_pins fact confined to windows that delegates to the helper' do
+      content = File.read(File.join(lib_root, 'facter', 'winget_pins.rb'))
+      expect(content).to include("Facter.add('winget_pins')")
+      expect(content).to include('PuppetX::Winget::Facts.pinned_ids')
     end
   end
 
@@ -384,6 +398,250 @@ RSpec.describe PuppetX::Winget::Facts do
         'OpenJS.NodeJS.22',
       ]
       expect(described_class.parse_winget_upgrade(output)).to eq(expected)
+    end
+  end
+
+  describe '.parse_upgrade_details' do
+    it 'returns an empty array for nil or empty output' do
+      expect(described_class.parse_upgrade_details(nil)).to eq([])
+      expect(described_class.parse_upgrade_details('')).to eq([])
+    end
+
+    it 'returns an empty array when no upgrades are available' do
+      expect(described_class.parse_upgrade_details("No applicable update found.\n")).to eq([])
+    end
+
+    it 'parses current and available versions' do
+      output = <<~OUTPUT
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+        Notepad++         Notepad++.Notepad++     8.5.4     8.6.0       winget
+        2 upgrades available.
+      OUTPUT
+      expect(described_class.parse_upgrade_details(output)).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+        { 'id' => 'Notepad++.Notepad++', 'current_version' => '8.5.4', 'available_version' => '8.6.0' },
+      ])
+    end
+
+    it 'parses a French-localized table (Disponible)' do
+      output = <<~OUTPUT
+        Nom               Id                      Version   Disponible  Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+      OUTPUT
+      expect(described_class.parse_upgrade_details(output)).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+      ])
+    end
+
+    it 'deduplicates rows across the explicit-targeting table' do
+      output = <<~OUTPUT
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+        The following packages have an upgrade available, but require explicit targeting:
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+        Foo               Foo.Foo                 1.0       2.0         winget
+      OUTPUT
+      expect(described_class.parse_upgrade_details(output)).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+        { 'id' => 'Foo.Foo', 'current_version' => '1.0', 'available_version' => '2.0' },
+      ])
+    end
+
+    it 'keeps rows with nil versions when the table has no Available column' do
+      output = <<~OUTPUT
+        Name              Id                      Version   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    winget
+      OUTPUT
+      expect(described_class.parse_upgrade_details(output)).to eq([
+        { 'id' => 'Git.Git', 'current_version' => nil, 'available_version' => nil },
+      ])
+    end
+
+    it 'parses real-world output with collapsed single-space gaps' do
+      output = <<~OUTPUT
+        Name                                               Id                                Version       Available     Source
+        -----------------------------------------------------------------------------------------------------------------------
+        Microsoft .NET 6.0.35 - Windows Server Hosting     Microsoft.DotNet.HostingBundle.6  6.0.35        6.0.36        winget
+        Microsoft Edge WebView2 Runtime                    Microsoft.EdgeWebView2Runtime     154.0.4258.62 155.0.4283.45 winget
+      OUTPUT
+      expect(described_class.parse_upgrade_details(output)).to eq([
+        { 'id' => 'Microsoft.DotNet.HostingBundle.6', 'current_version' => '6.0.35', 'available_version' => '6.0.36' },
+        { 'id' => 'Microsoft.EdgeWebView2Runtime', 'current_version' => '154.0.4258.62', 'available_version' => '155.0.4283.45' },
+      ])
+    end
+  end
+
+  describe '.upgrade_details' do
+    let(:winget_exe) do
+      'C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.8.2391_x64__8wekyb3d8bbwe/winget.exe'
+    end
+    let(:upgrade_output) do
+      <<~OUTPUT
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+      OUTPUT
+    end
+
+    context 'when upgrades are available' do
+      before(:each) do
+        allow(described_class).to receive(:winget_path).and_return(winget_exe)
+        allow(File).to receive(:exist?).with(winget_exe).and_return(true)
+        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+          Puppet::Util::Execution::ProcessOutput.new(upgrade_output, 0),
+        )
+      end
+
+      it 'returns structured rows' do
+        expect(described_class.upgrade_details).to eq([
+          { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+        ])
+      end
+    end
+
+    context 'when WINGET_UPGRADES_ENABLED disables the fact' do
+      before(:each) do
+        allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return('false')
+      end
+
+      it 'returns [] without shelling out' do
+        expect(Puppet::Util::Execution).not_to receive(:execute)
+        expect(described_class.upgrade_details(winget_exe)).to eq([])
+      end
+    end
+
+    context 'when execution raises an error' do
+      before(:each) do
+        allow(described_class).to receive(:winget_path).and_return(winget_exe)
+        allow(File).to receive(:exist?).with(winget_exe).and_return(true)
+        allow(Puppet::Util::Execution).to receive(:execute).and_raise(StandardError.new('boom'))
+      end
+
+      it 'returns an empty array and does not raise' do
+        expect(described_class.upgrade_details).to eq([])
+      end
+    end
+  end
+
+  describe '.pinned_ids and .parse_pin_list' do
+    let(:winget_exe) do
+      'C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.8.2391_x64__8wekyb3d8bbwe/winget.exe'
+    end
+    let(:pin_output) do
+      <<~OUTPUT
+        Name              Id                      Version   Pin
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    Pinning
+        Google Chrome     Google.Chrome           120.0     Blocking
+      OUTPUT
+    end
+
+    it 'returns an empty array for nil or empty output' do
+      expect(described_class.parse_pin_list(nil)).to eq([])
+      expect(described_class.parse_pin_list('')).to eq([])
+    end
+
+    it 'returns an empty array when no table is present' do
+      expect(described_class.parse_pin_list("No pins exist.\n")).to eq([])
+    end
+
+    it 'parses pinned IDs' do
+      expect(described_class.parse_pin_list(pin_output)).to eq(['Git.Git', 'Google.Chrome'])
+    end
+
+    context 'when pins exist' do
+      before(:each) do
+        allow(described_class).to receive(:winget_path).and_return(winget_exe)
+        allow(File).to receive(:exist?).with(winget_exe).and_return(true)
+        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+          Puppet::Util::Execution::ProcessOutput.new(pin_output, 0),
+        )
+      end
+
+      it 'returns the pinned IDs' do
+        expect(described_class.pinned_ids).to eq(['Git.Git', 'Google.Chrome'])
+      end
+
+      it 'lists pins non-interactively' do
+        expect(Puppet::Util::Execution).to receive(:execute).with(
+          [winget_exe, 'pin', 'list', '--accept-source-agreements', '--disable-interactivity'],
+          failonfail: false, combine: true,
+        ).and_return(
+          Puppet::Util::Execution::ProcessOutput.new(pin_output, 0),
+        )
+        expect(described_class.pinned_ids).to eq(['Git.Git', 'Google.Chrome'])
+      end
+    end
+
+    context 'when winget is absent' do
+      before(:each) do
+        allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(nil)
+      end
+
+      it 'returns an empty array' do
+        expect(described_class.pinned_ids).to eq([])
+      end
+    end
+
+    context 'when pin list fails (old winget without pin support)' do
+      before(:each) do
+        allow(described_class).to receive(:winget_path).and_return(winget_exe)
+        allow(File).to receive(:exist?).with(winget_exe).and_return(true)
+        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+          Puppet::Util::Execution::ProcessOutput.new('Invalid argument', 0x8A150005),
+        )
+      end
+
+      it 'returns an empty array' do
+        expect(described_class.pinned_ids).to eq([])
+      end
+    end
+  end
+
+  describe 'memoized command output' do
+    let(:winget_exe) do
+      'C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.8.2391_x64__8wekyb3d8bbwe/winget.exe'
+    end
+
+    before(:each) do
+      allow(described_class).to receive(:winget_path).and_return(winget_exe)
+      allow(File).to receive(:exist?).with(winget_exe).and_return(true)
+    end
+
+    it 'shares one winget upgrade call between both upgrade facts' do
+      output = <<~OUTPUT
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+      OUTPUT
+      expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
+        Puppet::Util::Execution::ProcessOutput.new(output, 0),
+      )
+      expect(described_class.winget_upgrades).to eq(['Git.Git'])
+      expect(described_class.upgrade_details).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+      ])
+    end
+
+    it 'runs fresh again after reset!' do
+      first = Puppet::Util::Execution::ProcessOutput.new("No applicable update found.\n", 0)
+      second_output = <<~OUTPUT
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+      OUTPUT
+      second = Puppet::Util::Execution::ProcessOutput.new(second_output, 0)
+      allow(Puppet::Util::Execution).to receive(:execute).and_return(first, second)
+      expect(described_class.winget_upgrades).to eq([])
+      described_class.reset!
+      expect(described_class.winget_upgrades).to eq(['Git.Git'])
     end
   end
 end

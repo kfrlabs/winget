@@ -33,6 +33,18 @@
 # @param only
 #   When non-empty, upgrade only these winget IDs (case-insensitive).
 #   Combined with `exclude`: an ID must be in `only` and not in `exclude`.
+# @param respect_pins
+#   Whether pinned packages (`winget pin`, see the `winget_pins` fact and
+#   `winget::pin`) are skipped. Default: true. This is the upgrade-side
+#   counterpart of the provider `holdable` feature and is more robust than
+#   `exclude` alone: pins travel with the node, not with this declaration.
+#   Set to false to upgrade pinned packages explicitly.
+# @param reboot_resource
+#   Optional title of a `reboot` resource (puppetlabs/reboot, declared by the
+#   caller) notified by every managed package, so a pending reboot requested
+#   by an installer (winget exit `0x8A150003`) is honored. Undef (default)
+#   means no reboot wiring: upgrades still succeed with a warning, exactly
+#   like the provider default.
 # @param schedule
 #   Name of a Puppet `schedule` resource applied as metaparameter to every
 #   managed package. Declare the resource yourself, or set `manage_schedule`
@@ -61,13 +73,18 @@
 # @example Upgrade everything on every run
 #   include winget::upgrade
 #
-# @example Weekly window with exclusions
+# @example Weekly window with exclusions, pins respected, reboot wired
+#   reboot { 'maintenance-reboot':
+#     when => pending,
+#   }
+#
 #   class { 'winget::upgrade':
 #     exclude          => ['Google.Chrome'],
 #     manage_schedule  => true,
 #     schedule_period  => 'weekly',
 #     schedule_weekday => 'Sunday',
 #     schedule_range   => '3 - 5',
+#     reboot_resource  => 'maintenance-reboot',
 #   }
 #
 # @example Reuse a schedule declared elsewhere
@@ -84,6 +101,8 @@
 class winget::upgrade (
   Array[String[1]] $exclude = [],
   Array[String[1]] $only = [],
+  Boolean $respect_pins = true,
+  Optional[String[1]] $reboot_resource = undef,
   Optional[String[1]] $schedule = undef,
   Boolean $manage_schedule = false,
   String[1] $schedule_name = 'winget-upgrade-window',
@@ -126,30 +145,27 @@ class winget::upgrade (
     undef   => [],
     default => $facts['winget_upgrades'],
   }
+  $pinned = $facts['winget_pins'] ? {
+    undef   => [],
+    default => $facts['winget_pins'],
+  }
   $only_lc = $only.map |$id| { $id.downcase }
   $exclude_lc = $exclude.map |$id| { $id.downcase }
+  $pinned_lc = $pinned.map |$id| { $id.downcase }
   $targets = $upgradable.filter |$id| {
-    ($only_lc.empty or $id.downcase in $only_lc) and !($id.downcase in $exclude_lc)
+    ($only_lc.empty or $id.downcase in $only_lc) and !($id.downcase in $exclude_lc) and !($respect_pins and ($id.downcase in $pinned_lc))
   }.unique
 
-  if $_schedule {
-    $targets.each |$id| {
-      if !defined(Package[$id]) {
-        package { $id:
-          ensure   => latest,
-          provider => winget,
-          schedule => $_schedule,
-        }
-      }
-    }
-  } else {
-    $targets.each |$id| {
-      if !defined(Package[$id]) {
-        package { $id:
-          ensure   => latest,
-          provider => winget,
-        }
-      }
-    }
+  $schedule_hash = $_schedule ? {
+    undef   => {},
+    default => { 'schedule' => $_schedule },
   }
+  $notify_hash = $reboot_resource ? {
+    undef   => {},
+    default => { 'notify' => Reboot[$reboot_resource] },
+  }
+  $pairs = $targets.filter |$id| { !defined(Package[$id]) }.map |$id| {
+    [$id, { 'ensure' => 'latest', 'provider' => 'winget' } + $schedule_hash + $notify_hash]
+  }
+  create_resources('package', Hash($pairs))
 }

@@ -1,0 +1,10 @@
+{
+  "description": "List winget packages with available upgrades (read-only, makes no changes). For on-demand inventory outside Puppet agent runs.",
+  "input_method": "stdin",
+  "parameters": {
+    "include_pinned": {
+      "description": "Include pinned packages in the listing. By default pinned packages are still listed (use `upgrade_now` without `include_pinned` to skip them during upgrades).",
+      "type": "Optional[Boolean]"
+    }
+  }
+}

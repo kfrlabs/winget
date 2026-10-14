@@ -894,4 +894,197 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       resource.provider.install
     end
   end
+
+  describe 'holdable feature' do
+    let(:winget_path) { 'C:/Path/to/winget.exe' }
+    let(:list_output) do
+      <<~OUTPUT
+        Name                  Id                   Version     Source
+        ----------------------------------------------------------------
+        Git                   Git.Git              2.40.0      winget
+      OUTPUT
+    end
+    let(:pin_output) do
+      <<~OUTPUT
+        Name                  Id                   Version   Pin
+        ----------------------------------------------------------------
+        Git                   Git.Git              2.40.0    Pinning
+      OUTPUT
+    end
+
+    before(:each) do
+      allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(winget_path)
+      allow(described_class).to receive(:suitable?).and_return(true)
+      # run_pins guards on File.exist?: the fake Windows path never exists
+      # on the Linux test runner without this stub.
+      allow(File).to receive(:exist?).and_call_original
+      allow(File).to receive(:exist?).with(winget_path).and_return(true)
+    end
+
+    it 'has holdable feature' do
+      expect(described_class.features).to include(:holdable)
+    end
+
+    context 'when the resource does not manage mark' do
+      it 'query reports no mark and spends no pin list call' do
+        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+          Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
+        )
+        expect(provider.query).to eq({ name: 'Git.Git', ensure: '2.40.0', provider: :winget })
+        expect(Puppet::Util::Execution).to have_received(:execute).once
+      end
+    end
+
+    context 'when the resource manages mark' do
+      let(:resource) do
+        Puppet::Type.type(:package).new(
+          name: 'Git.Git',
+          ensure: :installed,
+          provider: :winget,
+          mark: :hold
+        )
+      end
+
+      it 'query reports hold when the package is pinned' do
+        allow(Puppet::Util::Execution).to receive(:execute) do |cmd, *_args|
+          if cmd.include?('pin')
+            Puppet::Util::Execution::ProcessOutput.new(pin_output, 0)
+          else
+            Puppet::Util::Execution::ProcessOutput.new(list_output, 0)
+          end
+        end
+        expect(provider.query).to include(mark: :hold)
+      end
+
+      it 'query reports none when the package is not pinned' do
+        allow(Puppet::Util::Execution).to receive(:execute) do |cmd, *_args|
+          if cmd.include?('pin')
+            Puppet::Util::Execution::ProcessOutput.new("No pins exist.\n", 0)
+          else
+            Puppet::Util::Execution::ProcessOutput.new(list_output, 0)
+          end
+        end
+        expect(provider.query).to include(mark: :none)
+      end
+    end
+
+    describe '#hold' do
+      it 'calls winget pin add non-interactively' do
+        allow(described_class).to receive(:pins_list).and_return({})
+        expect(Puppet::Util::Execution).to receive(:execute).with(
+          [winget_path, 'pin', 'add', '--id', 'Git.Git', '--accept-source-agreements', '--disable-interactivity', '--exact'],
+          hash_including(failonfail: false, combine: true)
+        ).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
+        expect(provider.hold).to be_nil
+      end
+
+      it 'is idempotent when already pinned' do
+        allow(described_class).to receive(:pins_list).and_return('git.git' => true)
+        expect(Puppet::Util::Execution).not_to receive(:execute)
+        expect(provider.hold).to be_nil
+      end
+
+      it 'raises a meaningful error when pinning fails' do
+        allow(described_class).to receive(:pins_list).and_return({})
+        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+          Puppet::Util::Execution::ProcessOutput.new('pin failed', 1),
+        )
+        expect { provider.hold }.to raise_error(Puppet::Error, %r{Failed to pin package})
+      end
+    end
+
+    describe '#unhold' do
+      it 'calls winget pin remove non-interactively' do
+        allow(described_class).to receive(:pins_list).and_return('git.git' => true)
+        expect(Puppet::Util::Execution).to receive(:execute).with(
+          [winget_path, 'pin', 'remove', '--id', 'Git.Git', '--accept-source-agreements', '--disable-interactivity', '--exact'],
+          hash_including(failonfail: false, combine: true)
+        ).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
+        expect(provider.unhold).to be_nil
+      end
+
+      it 'is idempotent when not pinned' do
+        allow(described_class).to receive(:pins_list).and_return({})
+        expect(Puppet::Util::Execution).not_to receive(:execute)
+        expect(provider.unhold).to be_nil
+      end
+    end
+
+    describe 'install with mark => hold' do
+      let(:resource) do
+        Puppet::Type.type(:package).new(
+          name: 'Git.Git',
+          ensure: :installed,
+          provider: :winget,
+          mark: :hold
+        )
+      end
+
+      before(:each) do
+        allow(described_class).to receive(:pins_list).and_return({})
+      end
+
+      it 'pins the package after a successful install' do
+        expect(provider).to receive(:winget_exec).with('install', '--id', 'Git.Git').and_return(
+          Puppet::Util::Execution::ProcessOutput.new('', 0)
+        )
+        expect(provider).to receive(:pin_exec).with('add').and_return(
+          Puppet::Util::Execution::ProcessOutput.new('', 0)
+        )
+        provider.install
+      end
+    end
+
+    describe '.pins_list caching' do
+      it 'runs winget pin list only once for repeated lookups' do
+        expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
+          Puppet::Util::Execution::ProcessOutput.new(pin_output, 0),
+        )
+        described_class.pins_list
+        described_class.pins_list
+        expect(described_class.pins_list).to eq('git.git' => true)
+      end
+
+      it 're-lists after clear_pins_cache!' do
+        expect(Puppet::Util::Execution).to receive(:execute).twice.and_return(
+          Puppet::Util::Execution::ProcessOutput.new(pin_output, 0),
+        )
+        described_class.pins_list
+        described_class.clear_pins_cache!
+        described_class.pins_list
+      end
+
+      it 'returns an empty hash when winget is not suitable' do
+        allow(described_class).to receive(:suitable?).and_return(false)
+        expect(Puppet::Util::Execution).not_to receive(:execute)
+        expect(described_class.pins_list).to eq({})
+      end
+
+      it 'returns an empty hash when pin list fails' do
+        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+          Puppet::Util::Execution::ProcessOutput.new('boom', 1),
+        )
+        expect(described_class.pins_list).to eq({})
+      end
+    end
+
+    describe 'install_options source pair form' do
+      let(:resource) do
+        Puppet::Type.type(:package).new(
+          name: 'Git.Git',
+          ensure: :installed,
+          provider: :winget,
+          install_options: ['--scope', 'machine', '--source', 'msstore']
+        )
+      end
+
+      it 'extracts the source for show/upgrade and keeps both flags for install' do
+        expect(provider.send(:install_options_source)).to eq('msstore')
+        expect(provider).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--source', 'msstore', '--scope', 'machine').and_return(
+          Puppet::Util::Execution::ProcessOutput.new('', 0)
+        )
+        provider.install
+      end
+    end
+  end
 end
