@@ -309,7 +309,7 @@ Data type: `Optional[String[1]]`
 
 Optional title of a `reboot` resource (puppetlabs/reboot, declared by the
 caller) notified by every managed package, so a pending reboot requested
-by an installer (winget exit `0x8A150003`) is honored. Undef (default)
+by an installer (winget exit `0x8A150109`/`0x8A15010A`/`0x8A15010B`) is honored. Undef (default)
 means no reboot wiring: installs still succeed with a warning, exactly
 like the provider default.
 
@@ -580,7 +580,7 @@ Data type: `Optional[String[1]]`
 
 Optional title of a `reboot` resource (puppetlabs/reboot, declared by the
 caller) notified by every managed package, so a pending reboot requested
-by an installer (winget exit `0x8A150003`) is honored. Undef (default)
+by an installer (winget exit `0x8A150109`/`0x8A15010A`/`0x8A15010B`) is honored. Undef (default)
 means no reboot wiring: upgrades still succeed with a warning, exactly
 like the provider default.
 

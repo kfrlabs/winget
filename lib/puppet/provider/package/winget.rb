@@ -20,27 +20,33 @@
 
 require 'puppet/provider/package'
 
-# winget exit codes (defined once, guarded to avoid redefinition warnings)
-# https://learn.microsoft.com/en-us/windows/package-manager/winget/exit-codes
+# winget exit codes (verified against
+# https://github.com/microsoft/winget-cli/blob/master/doc/windows/package-manager/winget/returnCodes.md
+# via `winget error --output`. Hex literals below are the unsigned form of
+# the (signed decimal) codes winget reports.)
 # rubocop:disable Style/ClassAndModuleChildren
 unless defined?(::PuppetX::Winget::Provider::EXIT_SUCCESS)
   module PuppetX
     module Winget
       module Provider
         EXIT_SUCCESS = 0
-        EXIT_NO_APPLICABLE_INSTALLER = 0x8A150001  # Already installed (for install)
-        EXIT_NO_UPGRADE_AVAILABLE = 0x8A150002     # No upgrade available
-        EXIT_REBOOT_REQUIRED = 0x8A150003          # Reboot required
-        EXIT_USER_CANCELLED = 0x8A150004           # User cancelled
-        EXIT_INVALID_ARGUMENT = 0x8A150005         # Invalid argument
-        EXIT_NOT_FOUND = 0x8A150006                # Package not found
-        EXIT_HASH_MISMATCH = 0x8A150007            # Hash mismatch
-        EXIT_NETWORK_ERROR = 0x8A150008            # Network error
-        EXIT_SOURCE_ERROR = 0x8A150009             # Source error
-        EXIT_BLOCKED_BY_POLICY = 0x8A15000A        # Blocked by policy
-        EXIT_INSTALLER_FAILED = 0x8A15000B         # Installer failed
-        EXIT_NO_INSTALLED_PACKAGE_FOUND = 0x8A150014 # No installed package found matching input criteria (upgrade of absent package)
-        EXIT_UPDATE_NOT_APPLICABLE = 0x8A15002B      # No applicable upgrade (upgrade lists a version winget deems not newer)
+        EXIT_NO_APPLICABLE_INSTALLER = 0x8A150010  # None of the installers are applicable for the current system
+        EXIT_INSTALLER_HASH_MISMATCH = 0x8A150011  # The installer file's hash does not match the manifest
+        EXIT_NO_APPLICATIONS_FOUND = 0x8A150014    # No packages found (unknown ID; upgrade of an absent package)
+        EXIT_NO_MANIFEST_FOUND = 0x8A150017        # No manifest found matching the criteria (unknown ID in source)
+        EXIT_UPDATE_NOT_APPLICABLE = 0x8A15002B      # No applicable update found (nothing newer)
+        EXIT_BLOCKED_BY_POLICY = 0x8A15003A          # Operation is blocked by Group Policy
+        EXIT_DOWNLOAD_FAILED = 0x8A150008            # Downloading installer failed
+        EXIT_PACKAGE_ALREADY_INSTALLED = 0x8A150061  # Found at least one version of the package installed
+        EXIT_INSTALL_ALREADY_INSTALLED = 0x8A15010D  # Another version of this application is already installed
+        EXIT_INSTALL_REBOOT_REQUIRED_TO_FINISH = 0x8A150109 # Restart your PC to finish installation
+        EXIT_INSTALL_REBOOT_REQUIRED_FOR_INSTALL = 0x8A15010A # Installation failed. Restart your PC then try again
+        EXIT_INSTALL_REBOOT_INITIATED = 0x8A15010B    # Your PC will restart to finish installation
+        EXIT_INSTALL_CANCELLED_BY_USER = 0x8A15010C  # You cancelled the installation
+        EXIT_INSTALL_BLOCKED_BY_POLICY = 0x8A15010F  # Organization policies are preventing installation
+        # Kept for callers referencing the previous name: upgrade of an
+        # absent package (`winget upgrade` reports "No packages found").
+        EXIT_NO_INSTALLED_PACKAGE_FOUND = 0x8A150014
 
         # Non-interactive flags per subcommand, verified against
         # https://learn.microsoft.com/en-us/windows/package-manager/winget/.
@@ -438,9 +444,9 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
   # Upgrade a package to latest version.
   # Puppet calls `update` for `ensure => latest` even when the package is
-  # absent: `winget upgrade` then fails with 0x8A150014 ("No installed
-  # package found matching input criteria"). Fall back to `install` so
-  # `latest` installs a missing package instead of failing.
+  # absent: `winget upgrade` then fails with 0x8A150014 ("No packages
+  # found"). Fall back to `install` so `latest` installs a missing package
+  # instead of failing.
   def update
     args = ['upgrade', '--id', resource[:name]]
 
@@ -460,7 +466,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     end
 
     output = winget_exec(*args)
-    if output.exitstatus == PuppetX::Winget::Provider::EXIT_NO_INSTALLED_PACKAGE_FOUND
+    if output.exitstatus == PuppetX::Winget::Provider::EXIT_NO_APPLICATIONS_FOUND
       Puppet.debug("winget upgrade found no installed package #{resource[:name]}, falling back to install")
       install
     else
@@ -545,13 +551,10 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     when PuppetX::Winget::Provider::EXIT_SUCCESS
       # Success
       nil
-    when PuppetX::Winget::Provider::EXIT_NO_APPLICABLE_INSTALLER
+    when PuppetX::Winget::Provider::EXIT_PACKAGE_ALREADY_INSTALLED,
+         PuppetX::Winget::Provider::EXIT_INSTALL_ALREADY_INSTALLED
       # Already installed (during install) - idempotent success
       return nil if action == 'install'
-      raise Puppet::Error, _('winget %{action} failed: %{output}') % { action: action, output: output }
-    when PuppetX::Winget::Provider::EXIT_NO_UPGRADE_AVAILABLE
-      # No upgrade available - idempotent success for upgrade
-      return nil if action == 'upgrade'
       raise Puppet::Error, _('winget %{action} failed: %{output}') % { action: action, output: output }
     when PuppetX::Winget::Provider::EXIT_UPDATE_NOT_APPLICABLE
       # winget listed an upgrade but its own version comparison finds
@@ -559,28 +562,35 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
       # installed): idempotent success for upgrade
       return nil if action == 'upgrade'
       raise Puppet::Error, _('winget %{action} failed: %{output}') % { action: action, output: output }
-    when PuppetX::Winget::Provider::EXIT_REBOOT_REQUIRED
+    when PuppetX::Winget::Provider::EXIT_INSTALL_REBOOT_REQUIRED_TO_FINISH,
+         PuppetX::Winget::Provider::EXIT_INSTALL_REBOOT_REQUIRED_FOR_INSTALL,
+         PuppetX::Winget::Provider::EXIT_INSTALL_REBOOT_INITIATED
       # Reboot required - treat as success but warn
       Puppet.warning(_('winget %{action} succeeded but a reboot is required') % { action: action })
       nil
-    when PuppetX::Winget::Provider::EXIT_NOT_FOUND
+    when PuppetX::Winget::Provider::EXIT_NO_APPLICATIONS_FOUND
+      # 0x8A150014 means "No packages found": unknown ID for install
+      # (not in any source), or absent package for uninstall/upgrade.
+      # (`update` intercepts this code before reaching here and falls back
+      # to `install`, so upgrade only lands here in edge cases.)
+      if action == 'install'
+        raise Puppet::Error, _('Package \'%{name}\' not found in winget source') % { name: resource[:name] }
+      else
+        raise Puppet::Error, _('Package \'%{name}\' is not installed') % { name: resource[:name] }
+      end
+    when PuppetX::Winget::Provider::EXIT_NO_MANIFEST_FOUND
       raise Puppet::Error, _('Package \'%{name}\' not found in winget source') % { name: resource[:name] }
-    when PuppetX::Winget::Provider::EXIT_NO_INSTALLED_PACKAGE_FOUND
-      raise Puppet::Error, _('Package \'%{name}\' is not installed') % { name: resource[:name] }
-    when PuppetX::Winget::Provider::EXIT_BLOCKED_BY_POLICY
+    when PuppetX::Winget::Provider::EXIT_NO_APPLICABLE_INSTALLER
+      raise Puppet::Error, _('winget %{action} failed: no applicable installer for the current system: %{output}') % { action: action, output: output }
+    when PuppetX::Winget::Provider::EXIT_BLOCKED_BY_POLICY,
+         PuppetX::Winget::Provider::EXIT_INSTALL_BLOCKED_BY_POLICY
       raise Puppet::Error, _('winget %{action} blocked by policy: %{output}') % { action: action, output: output }
-    when PuppetX::Winget::Provider::EXIT_HASH_MISMATCH
+    when PuppetX::Winget::Provider::EXIT_INSTALLER_HASH_MISMATCH
       raise Puppet::Error, _('winget %{action} failed: installer hash mismatch') % { action: action }
-    when PuppetX::Winget::Provider::EXIT_NETWORK_ERROR
-      raise Puppet::Error, _('winget %{action} failed: network error') % { action: action }
-    when PuppetX::Winget::Provider::EXIT_SOURCE_ERROR
-      raise Puppet::Error, _('winget %{action} failed: source error') % { action: action }
-    when PuppetX::Winget::Provider::EXIT_INSTALLER_FAILED
-      raise Puppet::Error, _('winget %{action} failed: installer error: %{output}') % { action: action, output: output }
-    when PuppetX::Winget::Provider::EXIT_USER_CANCELLED
+    when PuppetX::Winget::Provider::EXIT_DOWNLOAD_FAILED
+      raise Puppet::Error, _('winget %{action} failed: downloading installer failed') % { action: action }
+    when PuppetX::Winget::Provider::EXIT_INSTALL_CANCELLED_BY_USER
       raise Puppet::Error, _('winget %{action} cancelled by user') % { action: action }
-    when PuppetX::Winget::Provider::EXIT_INVALID_ARGUMENT
-      raise Puppet::Error, _('winget %{action} failed: invalid argument: %{output}') % { action: action, output: output }
     else
       raise Puppet::Error, _('winget %{action} failed with exit code %{code}: %{output}') % { action: action, code: output.exitstatus, output: output }
     end

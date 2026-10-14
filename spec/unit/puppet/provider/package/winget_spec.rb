@@ -370,7 +370,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     context 'when the package is not installed (0x8A150014)' do
       it 'falls back to install so ensure => latest works on absent packages' do
         upgrade_output = Puppet::Util::Execution::ProcessOutput.new(
-          'No installed package found matching input criteria.', 0x8A150014
+          'No packages found.', 0x8A150014
         )
         expect(provider).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git').and_return(upgrade_output)
         expect(provider).to receive(:install)
@@ -487,8 +487,8 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
     end
 
-    context 'with EXIT_NO_APPLICABLE_INSTALLER (already installed)' do
-      let(:code) { 0x8A150001 }
+    context 'with EXIT_PACKAGE_ALREADY_INSTALLED (0x8A150061, already installed)' do
+      let(:code) { 0x8A150061 }
       it 'returns nil for install (idempotent)' do
         expect(provider.send(:handle_exit_code, output, 'install')).to be_nil
       end
@@ -497,35 +497,85 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
     end
 
-    context 'with EXIT_NO_UPGRADE_AVAILABLE' do
-      let(:code) { 0x8A150002 }
-      it 'returns nil for upgrade (idempotent)' do
-        expect(provider.send(:handle_exit_code, output, 'upgrade')).to be_nil
-      end
-      it 'raises for other actions' do
-        expect { provider.send(:handle_exit_code, output, 'install') }.to raise_error(Puppet::Error)
-      end
-    end
-
-    context 'with EXIT_REBOOT_REQUIRED' do
-      let(:code) { 0x8A150003 }
-      it 'warns but returns nil' do
-        expect(Puppet).to receive(:warning).with(/reboot is required/)
+    context 'with EXIT_INSTALL_ALREADY_INSTALLED (0x8A15010D, already installed)' do
+      let(:code) { 0x8A15010D }
+      it 'returns nil for install (idempotent)' do
         expect(provider.send(:handle_exit_code, output, 'install')).to be_nil
       end
+      it 'raises for other actions' do
+        expect { provider.send(:handle_exit_code, output, 'upgrade') }.to raise_error(Puppet::Error)
+      end
     end
 
-    context 'with EXIT_NOT_FOUND' do
-      let(:code) { 0x8A150006 }
+    context 'with reboot codes (0x8A150109/0x8A15010A/0x8A15010B)' do
+      [0x8A150109, 0x8A15010A, 0x8A15010B].each do |reboot_code|
+        it "warns but returns nil for 0x#{reboot_code.to_s(16).upcase}" do
+          reboot_output = Puppet::Util::Execution::ProcessOutput.new('error output', reboot_code)
+          expect(Puppet).to receive(:warning).with(/reboot is required/)
+          expect(provider.send(:handle_exit_code, reboot_output, 'install')).to be_nil
+        end
+      end
+    end
+
+    context 'with internal/command errors (0x8A150001/0x8A150003 are failures, not success)' do
+      [0x8A150001, 0x8A150003].each do |failure_code|
+        it "raises with exit code for 0x#{failure_code.to_s(16).upcase}" do
+          failure_output = Puppet::Util::Execution::ProcessOutput.new('error output', failure_code)
+          expect { provider.send(:handle_exit_code, failure_output, 'install') }.to raise_error(Puppet::Error, /exit code/)
+        end
+      end
+    end
+
+    context 'with EXIT_NO_APPLICABLE_INSTALLER (0x8A150010)' do
+      let(:code) { 0x8A150010 }
+      it 'raises a no-applicable-installer error' do
+        expect { provider.send(:handle_exit_code, output, 'install') }.to raise_error(Puppet::Error, /no applicable installer/)
+      end
+    end
+
+    context 'with EXIT_NO_APPLICATIONS_FOUND (0x8A150014)' do
+      let(:code) { 0x8A150014 }
+      it 'raises not-found for install (unknown ID in source)' do
+        expect { provider.send(:handle_exit_code, output, 'install') }.to raise_error(Puppet::Error, /not found in winget source/)
+      end
+      it 'raises a not-installed error for uninstall/upgrade instead of a raw exit code' do
+        expect { provider.send(:handle_exit_code, output, 'upgrade') }.to raise_error(Puppet::Error, /is not installed/)
+        expect { provider.send(:handle_exit_code, output, 'uninstall') }.to raise_error(Puppet::Error, /is not installed/)
+      end
+    end
+
+    context 'with EXIT_NO_MANIFEST_FOUND (0x8A150017)' do
+      let(:code) { 0x8A150017 }
       it 'raises with package name' do
         expect { provider.send(:handle_exit_code, output, 'install') }.to raise_error(Puppet::Error, /not found in winget source/)
       end
     end
 
-    context 'with EXIT_NO_INSTALLED_PACKAGE_FOUND (0x8A150014)' do
-      let(:code) { 0x8A150014 }
-      it 'raises a not-installed error instead of a raw exit code' do
-        expect { provider.send(:handle_exit_code, output, 'upgrade') }.to raise_error(Puppet::Error, /is not installed/)
+    context 'with EXIT_BLOCKED_BY_POLICY (0x8A15003A)' do
+      let(:code) { 0x8A15003A }
+      it 'raises a policy error' do
+        expect { provider.send(:handle_exit_code, output, 'install') }.to raise_error(Puppet::Error, /blocked by policy/)
+      end
+    end
+
+    context 'with EXIT_INSTALLER_HASH_MISMATCH (0x8A150011)' do
+      let(:code) { 0x8A150011 }
+      it 'raises a hash mismatch error' do
+        expect { provider.send(:handle_exit_code, output, 'install') }.to raise_error(Puppet::Error, /hash mismatch/)
+      end
+    end
+
+    context 'with EXIT_DOWNLOAD_FAILED (0x8A150008)' do
+      let(:code) { 0x8A150008 }
+      it 'raises a download error' do
+        expect { provider.send(:handle_exit_code, output, 'install') }.to raise_error(Puppet::Error, /downloading installer failed/)
+      end
+    end
+
+    context 'with EXIT_INSTALL_CANCELLED_BY_USER (0x8A15010C)' do
+      let(:code) { 0x8A15010C }
+      it 'raises a cancelled error' do
+        expect { provider.send(:handle_exit_code, output, 'install') }.to raise_error(Puppet::Error, /cancelled by user/)
       end
     end
 
@@ -740,7 +790,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
         expect(provider.latest).to eq('2.41.0')
 
         upgrade_output = Puppet::Util::Execution::ProcessOutput.new(
-          'No installed package found matching input criteria.', 0x8A150014
+          'No packages found.', 0x8A150014
         )
         expect(provider).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git').and_return(upgrade_output)
         expect(provider).to receive(:install)

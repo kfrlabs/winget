@@ -163,7 +163,7 @@ are skipped automatically (`respect_pins => true`, backed by the
 `respect_pins => false`.
 
 To chain a reboot (puppetlabs/reboot) when an installer requests one
-(winget exit `0x8A150003`, otherwise a warning + success):
+(winget exit `0x8A150109`/`0x8A15010A`/`0x8A15010B`, otherwise a warning + success):
 
 ```puppet
 reboot { 'maintenance-reboot':
@@ -330,7 +330,7 @@ bolt task run winget::upgrade_now exclude='["Google.Chrome"]' --targets windows-
 #### Reboot Handling
 
 A successful install/upgrade that requests a reboot (winget exit
-`0x8A150003`) is treated as success with a warning, exactly like
+`0x8A150109`/`0x8A15010A`/`0x8A15010B`) is treated as success with a warning, exactly like
 `--allow-reboot` without rebooting. To actually reboot, wire the optional
 `reboot_resource` parameter of `winget::packages` / `winget::upgrade` to a
 `reboot` resource you declare (puppetlabs/reboot module):
@@ -805,7 +805,7 @@ class { 'winget':
    host` → Add `Class['winget'] -> Package <| provider == winget |>` (see
    [First Run](#first-run-bootstrap-and-packages-in-one-catalog))
 
-### Package installation fails with exit code 0x8A150006 (NOT_FOUND)
+### Package installation fails with exit code 0x8A150014 (NO_APPLICATIONS_FOUND) or 0x8A150017 (NO_MANIFEST_FOUND)
 
 **Cause**: Package ID not found in the configured source.
 
@@ -814,13 +814,32 @@ class { 'winget':
 - Try a different source: `install_options => [{ 'source' => 'msstore' }]`
 - Check if the package exists in the winget repository
 
-### Package installation fails with exit code 0x8A150001 (NO_APPLICABLE_INSTALLER)
+### Package install reports already installed (0x8A150061 / 0x8A15010D)
 
-**Cause**: Package is already installed.
+**Cause**: The package (or another version of it) is already installed
+(`APPINSTALLER_CLI_ERROR_PACKAGE_ALREADY_INSTALLED` / `APPINSTALLER_CLI_ERROR_INSTALL_ALREADY_INSTALLED`).
 
 **Solution**: This is treated as idempotent success. No action needed.
 
-### Package installation fails with exit code 0x8A150003 (REBOOT_REQUIRED)
+### Package installation fails with exit code 0x8A150010 (NO_APPLICABLE_INSTALLER)
+
+**Cause**: None of the installers are applicable for the current system
+(e.g. wrong architecture/OS requirements).
+
+**Solutions**:
+- Check the package manifest for supported architectures and OS versions
+- Try a different package version or source
+
+### Package installation fails with exit code 0x8A150001 (INTERNAL_ERROR) or 0x8A150003 (COMMAND_FAILED)
+
+**Cause**: Generic winget failure (internal error / command failed). These
+are not success codes: the install did not complete.
+
+**Solutions**:
+- Rerun with debug logging and inspect the winget log (`winget --open-logs`)
+- Look up the exact code with `winget error <code>`
+
+### Package installation requests a reboot (0x8A150109 / 0x8A15010A / 0x8A15010B)
 
 **Cause**: Installation succeeded but requires a reboot.
 

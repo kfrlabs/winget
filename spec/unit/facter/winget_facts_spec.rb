@@ -595,7 +595,7 @@ RSpec.describe PuppetX::Winget::Facts do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
         allow(Puppet::Util::Execution).to receive(:execute).and_return(
-          Puppet::Util::Execution::ProcessOutput.new('Invalid argument', 0x8A150005),
+          Puppet::Util::Execution::ProcessOutput.new('Invalid argument', 0x8A150002),
         )
       end
 
