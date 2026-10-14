@@ -1,0 +1,18 @@
+{
+  "description": "Upgrade winget packages immediately (on-demand, outside Puppet agent runs). Upgrades the given IDs, or every package with an available upgrade when `ids` is empty.",
+  "input_method": "stdin",
+  "parameters": {
+    "ids": {
+      "description": "Winget IDs to upgrade. When empty, every package with an available upgrade is processed (minus `exclude`).",
+      "type": "Optional[Array[String]]"
+    },
+    "exclude": {
+      "description": "Winget IDs to skip (case-insensitive). Only used when `ids` is empty.",
+      "type": "Optional[Array[String]]"
+    },
+    "include_pinned": {
+      "description": "Also upgrade pinned packages when enumerating all upgrades. Explicit `ids` are always upgraded (a blocking pin still fails the package).",
+      "type": "Optional[Boolean]"
+    }
+  }
+}

@@ -22,7 +22,7 @@ Puppet module for managing Windows packages via winget (Windows Package Manager)
 
 ## Description
 
-This module provides a `winget` provider for Puppet's built-in `package` type, allowing you to manage Windows packages using the Windows Package Manager (winget). It also includes a `winget` class to bootstrap winget on systems where it is not pre-installed, a `winget::upgrade` class for bulk upgrades, and custom facts `winget_path`, `winget_version` and `winget_upgrades` for inventory and conditional logic.
+This module provides a `winget` provider for Puppet's built-in `package` type, allowing you to manage Windows packages using the Windows Package Manager (winget). It also includes a `winget` class to bootstrap winget on systems where it is not pre-installed, a `winget::packages` class to declare packages from Hiera, a `winget::upgrade` class for bulk upgrades, `winget::sources` / `winget::source` for private package sources, `winget::pin` plus a provider `holdable` feature to hold packages back, a `winget::settings` class for the winget client configuration, Bolt tasks for on-demand upgrades, and custom facts `winget_path`, `winget_version`, `winget_upgrades`, `winget_upgrades_detail` and `winget_pins` for inventory and conditional logic.
 
 ## Requirements
 
@@ -156,6 +156,221 @@ A package already declared elsewhere in the catalog (e.g. `package {
 redeclaring it would fail with a duplicate-declaration error. Declare
 `winget::upgrade` after your own `package` resources, or list such IDs in
 `exclude` and manage their upgrades yourself.
+
+Pinned packages (`winget pin`, see [Holding Packages Back](#holding-packages-back-pins))
+are skipped automatically (`respect_pins => true`, backed by the
+`winget_pins` fact). To upgrade them explicitly, set
+`respect_pins => false`.
+
+To chain a reboot (puppetlabs/reboot) when an installer requests one
+(winget exit `0x8A150003`, otherwise a warning + success):
+
+```puppet
+reboot { 'maintenance-reboot':
+  when => pending,
+}
+
+class { 'winget::upgrade':
+  reboot_resource => 'maintenance-reboot',
+}
+```
+
+#### Declaring Packages from Hiera (`winget::packages`)
+
+The `winget::packages` class reads a `Winget::PackagesHash` hash (automatic
+Hiera lookup via `winget::packages::packages`, see `types/`) and declares
+one `package` with the winget provider per entry. Entries accept either a
+shorthand ensure string or a full hash with structured install parameters,
+an optional `schedule`, and a `hold` flag:
+
+```yaml
+# hiera.yaml
+winget::packages::packages:
+  Git.Git:
+    ensure: present
+    scope: machine
+  Microsoft.VisualStudioCode:
+    ensure: latest
+    hold: true
+  Old.App:
+    ensure: absent
+```
+
+```puppet
+include winget::packages
+
+# Guarantee ordering: bootstrap before packages
+Class['winget'] -> Class['winget::packages']
+```
+
+Structured keys (`source`, `scope`, `architecture`, `location`,
+`override`, `installer_type`, `locale`) are translated into
+`winget install` flags and prepended to any extra `install_options`.
+Like `winget::upgrade`, entries already declared elsewhere are left alone.
+
+#### Holding Packages Back (pins)
+
+Two complementary mechanisms keep a package at its current version:
+
+- `mark => hold` on a `package` resource (provider `holdable` feature,
+  mapped to `winget pin add` / `winget pin remove`). A plain pin excludes
+  the package from `winget upgrade --all` while still allowing an explicit
+  upgrade (`ensure => latest` on that same resource keeps working).
+- `winget::pin` for blocking pins (`blocking => true`, which even refuse
+  explicit upgrades) and gating pins (`version => '1.2.*'`, which restrict
+  upgrades to a version range). Never combine a blocking pin with
+  `ensure => latest` on the same package.
+
+```puppet
+# Plain hold, e.g. via Hiera (winget::packages)
+# Git.Git:
+#   ensure: present
+#   hold: true
+
+# Or directly on a package resource
+package { 'Google.Chrome':
+  ensure   => installed,
+  provider => winget,
+  mark     => hold,
+}
+
+# Advanced pins
+winget::pin { 'Google.Chrome':
+  ensure   => present,
+  blocking => true,
+}
+
+winget::pin { 'Microsoft.PowerToys':
+  ensure  => present,
+  version => '0.70.*',
+}
+```
+
+`winget::upgrade` skips pinned IDs automatically; the `winget_pins` fact
+exposes them for reporting and conditional logic.
+
+#### Private Package Sources
+
+Declare additional winget sources (e.g. an internal `Microsoft.Rest`
+source) with `winget::source`, or manage the whole set from Hiera with
+`winget::sources` (including an optional reset to the defaults first):
+
+```puppet
+winget::source { 'contoso':
+  url         => 'https://winget.contoso.example.com/cache',
+  source_type => 'Microsoft.Rest',
+  trust_level => 'trusted',
+}
+```
+
+```yaml
+# hiera.yaml
+winget::sources::sources:
+  contoso:
+    url: https://winget.contoso.example.com/cache
+    source_type: Microsoft.Rest
+    trust_level: trusted
+```
+
+```puppet
+class { 'winget::sources':
+  reset_defaults => true,
+}
+
+Class['winget'] -> Class['winget::sources']
+```
+
+The optional `header` parameter (REST auth header) is `Sensitive` and never
+lands in logs or reports.
+
+#### Install Scope and Structured Parameters
+
+The Puppet agent runs as **SYSTEM**. Packages installed with the default
+user scope are invisible to `winget list` under SYSTEM (the provider then
+sees them as absent and reinstalls on every run). Prefer machine scope for
+agent-managed packages:
+
+```puppet
+class { 'winget::packages':
+  packages => {
+    'Git.Git' => {
+      ensure => installed,
+      scope  => 'machine',
+    },
+  },
+}
+```
+
+The same flags are available per package: `architecture` (`x64`,
+`arm64`, ...), `location` (install directory, when supported),
+`override` (verbatim installer arguments), `installer_type` and `locale`,
+plus raw `install_options` / `uninstall_options` appended after the
+structured flags. Fleet-wide, the default scope can also be set once via
+`installBehavior.preferences.scope` (see
+[Winget Client Settings](#winget-client-settings)) instead of repeating
+`scope => 'machine'` everywhere.
+
+#### On-Demand Upgrades with Bolt Tasks
+
+For upgrades outside agent runs (Bolt, Puppet Enterprise orchestrator),
+the module ships two tasks:
+
+- `winget::list_upgrades`: read-only listing of packages with available
+  upgrades (ID, installed and available versions).
+- `winget::upgrade_now`: upgrade the given `ids`, or everything available
+  (minus `exclude`, minus pinned packages unless `include_pinned`).
+  Per-package failures are reported in the JSON result; a
+  reboot-requesting installer yields `reboot_required: true`.
+
+```bash
+bolt task run winget::list_upgrades --targets windows-hosts
+bolt task run winget::upgrade_now exclude='["Google.Chrome"]' --targets windows-hosts
+```
+
+#### Reboot Handling
+
+A successful install/upgrade that requests a reboot (winget exit
+`0x8A150003`) is treated as success with a warning, exactly like
+`--allow-reboot` without rebooting. To actually reboot, wire the optional
+`reboot_resource` parameter of `winget::packages` / `winget::upgrade` to a
+`reboot` resource you declare (puppetlabs/reboot module):
+
+```puppet
+reboot { 'winget-reboot':
+  when => pending,
+}
+
+class { 'winget::packages':
+  packages        => { 'Git.Git' => 'latest' },
+  reboot_resource => 'winget-reboot',
+}
+```
+
+#### Winget Client Settings
+
+The `winget::settings` class manages `settings.json` for the agent account
+(SYSTEM by default), merging `settings` with `experimental_features`:
+
+```puppet
+class { 'winget::settings':
+  settings => {
+    'telemetry'       => { 'disable' => true },
+    'installBehavior' => { 'preferences' => { 'scope' => 'machine' } },
+  },
+  experimental_features => { 'resume' => true },
+}
+
+Class['winget'] -> Class['winget::settings']
+```
+
+A Desired State Configuration file can be applied idempotently with
+`winget::configure` (guarded by `winget configure test`):
+
+```puppet
+winget::configure { 'C:/Configs/workstation.winget': }
+
+Class['winget'] -> Winget::Configure <| |>
+```
 
 #### Microsoft Store Source
 
@@ -353,6 +568,30 @@ Returns the list of winget package IDs with an available upgrade (e.g.
 `['Git.Git']`), or `[]` when winget is absent or the query fails. Used by
 `Class['winget::upgrade']` to declare one `package` per ID.
 
+#### winget_upgrades_detail
+
+Returns structured upgrade rows for PuppetDB inventory and reporting, e.g.
+`[{'id' => 'Git.Git', 'current_version' => '2.40.0',
+'available_version' => '2.41.0'}]`, or `[]` when winget is absent or the
+query fails. Shares a single `winget upgrade` invocation per agent run with
+`winget_upgrades` (same `WINGET_UPGRADES_ENABLED=false` opt-out and
+facter.conf TTL caching).
+
+```puppet
+# Usage in Puppet code
+$updates = $facts['winget_upgrades_detail'].map |$row| {
+  "${row['id']} ${row['current_version']} -> ${row['available_version']}"
+}
+```
+
+#### winget_pins
+
+Returns the list of pinned winget package IDs (`winget pin list`, e.g.
+`['Google.Chrome']`), or `[]` when winget is absent, pins are unsupported,
+or the query fails. Used by `Class['winget::upgrade']` (`respect_pins`)
+and backing the provider `holdable` feature. Unlike `winget_upgrades`,
+this is a fast local query (no source round-trips) and is always enabled.
+
 ## Reference
 
 Full Puppet Strings reference is available in [REFERENCE.md](REFERENCE.md),
@@ -368,13 +607,51 @@ and [REFERENCE.md](REFERENCE.md#winget).
 `source` accepts `'cdn'` (Microsoft CDN, preferred), `'github'`, `'auto'`
 (default) and `'msstore'` (deprecated alias for `'cdn'`).
 
+#### `winget::packages`
+
+Declares one `package` with the winget provider per entry of a
+Hiera-friendly hash, with structured install parameters (`scope`,
+`architecture`, `location`, `override`, ...), optional `schedule`, optional
+`reboot_resource` wiring, and a `hold` flag mapped to `winget pin`.
+See [Declaring Packages from Hiera](#declaring-packages-from-hierawingetpackages)
+and [REFERENCE.md](REFERENCE.md#winget--packages).
+
 #### `winget::upgrade`
 
 Declares one `package` with `ensure => latest` per ID from the
 `winget_upgrades` fact. See [Bulk Upgrade](#bulk-upgrade-all-packages-with-available-updates)
 and [REFERENCE.md](REFERENCE.md#winget--upgrade).
 
+#### `winget::sources`
+
+Manages winget package sources from a Hiera-friendly hash, with an
+optional reset to the defaults first. See
+[Private Package Sources](#private-package-sources) and
+[REFERENCE.md](REFERENCE.md#winget--sources).
+
+#### `winget::settings`
+
+Manages the winget client configuration (`settings.json`) for the agent
+account, including experimental features. See
+[Winget Client Settings](#winget-client-settings) and
+[REFERENCE.md](REFERENCE.md#winget--settings).
+
 ### Defined Types
+
+#### `winget::source`
+
+Manages a single winget package source (`winget source add/remove`),
+including private `Microsoft.Rest` sources.
+
+#### `winget::pin`
+
+Manages blocking and version-gating pins (`winget pin add/remove`) beyond
+the provider `holdable` feature.
+
+#### `winget::configure`
+
+Applies a winget configuration file idempotently (`winget configure`,
+guarded by `winget configure test`).
 
 #### `winget::install::msstore`
 
@@ -390,13 +667,32 @@ Installs winget from GitHub releases.
 
 Installs winget from a local AppX/MSIX/MSIXBundle file.
 
+### Data Types
+
+`types/` aliases for structured parameters: `Winget::Package` /
+`Winget::PackagesHash` (see `winget::packages`), `Winget::SourceEntry` /
+`Winget::SourcesHash` (see `winget::sources`). See [REFERENCE.md](REFERENCE.md).
+
+### Bolt Tasks
+
+- `winget::list_upgrades`: read-only listing of available upgrades
+  (ID, installed and available versions) for on-demand inventory.
+- `winget::upgrade_now`: upgrade the given `ids` now, or everything
+  available (minus `exclude`, minus pins unless `include_pinned`).
+
+See [On-Demand Upgrades with Bolt Tasks](#on-demand-upgrades-with-bolt-tasks).
+
 ### Provider
 
 #### `winget` (package provider)
 
 Provider for the `package` type using Windows Package Manager.
 
-**Features**: installable, uninstallable, upgradeable, versionable, install_options, uninstall_options
+**Features**: installable, uninstallable, upgradeable, versionable, install_options, uninstall_options, holdable
+
+**Hold support**: `mark => hold` maps to `winget pin add` (plain pinning:
+excluded from `upgrade --all`, explicit upgrades still allowed);
+`mark => none` (default) maps to `winget pin remove`.
 
 **Default flags passed to all commands**:
 - `--accept-package-agreements`
@@ -428,7 +724,29 @@ Description: Winget package IDs with an available upgrade (e.g.,
 `['Git.Git']`), or `[]` when winget is absent or the query fails. Read by
 `Class['winget::upgrade']`.
 
+#### `winget_upgrades_detail`
+
+Type: Array of Hash (`id`, `current_version`, `available_version`)
+Description: Structured upgrade rows for PuppetDB inventory and reporting,
+sharing one `winget upgrade` invocation per run with `winget_upgrades`.
+
+#### `winget_pins`
+
+Type: Array of String
+Description: Pinned winget package IDs (`winget pin list`), or `[]` when
+winget is absent or the query fails. Read by `Class['winget::upgrade']`
+(`respect_pins`) and backing the provider `holdable` feature.
+
 ## Limitations
+
+### Install Scope under SYSTEM
+
+The Puppet agent runs as SYSTEM: prefer `scope => 'machine'` for
+agent-managed packages (or the `installBehavior.preferences.scope`
+setting via `winget::settings`). User-scope installs are invisible to
+`winget list` under SYSTEM, so the provider would report them absent and
+reinstall on every run. See
+[Install Scope and Structured Parameters](#install-scope-and-structured-parameters).
 
 ### SYSTEM Context and WindowsApps ACL
 

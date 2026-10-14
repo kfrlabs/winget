@@ -4,21 +4,32 @@ require 'puppet_x/winget/path_resolver'
 
 # Facts helper for winget facts.
 #
-# Centralizes the logic behind the `winget_path`, `winget_version` and
-# `winget_upgrades` facts so it can be unit tested without depending on the
-# Facter confine context. Helpers never raise: they return nil/[] when winget
-# is absent or when any error occurs. Note `winget_upgrades` shells out to
-# `winget upgrade` (source round-trips, a few seconds) while the other two
-# are fast. To avoid paying that cost on every agent run, either cache the
-# fact with a TTL in facter.conf (`facts: { ttls: [{ winget_upgrades:
-# "1 day" }] }`) or opt out entirely with
-# `WINGET_UPGRADES_ENABLED=false` (then `winget::upgrade` sees []).
+# Centralizes the logic behind the `winget_path`, `winget_version`,
+# `winget_upgrades`, `winget_upgrades_detail` and `winget_pins` facts so it
+# can be unit tested without depending on the Facter confine context.
+# Helpers never raise: they return nil/[] when winget is absent or when any
+# error occurs. Note `winget_upgrades` and `winget_upgrades_detail` shell out
+# to `winget upgrade` (source round-trips, a few seconds) and share a single
+# memoized invocation per process, while `winget_pins` is a fast local
+# `winget pin list` query. To avoid paying the upgrade cost on every agent
+# run, either cache the facts with a TTL in facter.conf
+# (`facts: { ttls: [{ winget_upgrades: "1 day" }] }`) or opt out entirely with
+# `WINGET_UPGRADES_ENABLED=false` (upgrade facts then return []).
 # rubocop:disable Style/ClassAndModuleChildren
 module PuppetX
   module Winget
     # Facts resolves winget facts using the shared path resolver.
     class Facts
+      # Length of the literal 'Version' table header word, used in column
+      # offset math (a constant so the size is never recomputed).
+      VERSION_HEADER_LENGTH = 7
       class << self
+        # Clear memoized command output (primarily for testing).
+        def reset!
+          @upgrade_output = nil
+          @pins_output = nil
+        end
+
         # @return [String, nil] Absolute path to winget.exe, or nil if absent
         def winget_path
           PuppetX::Winget::PathResolver.winget_path
@@ -42,11 +53,12 @@ module PuppetX
           nil
         end
 
-        # Whether the expensive `winget_upgrades` fact may run.
-        # Opt out by setting `WINGET_UPGRADES_ENABLED` to a false-like
-        # value (`false`, `0`, `no`, `off`). Anything else (including
-        # unset) keeps the fact enabled for backward compatibility.
-        # @return [Boolean] False when the fact must return [] without shelling out
+        # Whether the expensive `winget_upgrades`/`winget_upgrades_detail`
+        # facts may run. Opt out by setting `WINGET_UPGRADES_ENABLED` to a
+        # false-like value (`false`, `0`, `no`, `off`). Anything else
+        # (including unset) keeps the facts enabled for backward
+        # compatibility.
+        # @return [Boolean] False when the upgrade facts must return [] without shelling out
         def upgrades_enabled?
           value = ENV.fetch('WINGET_UPGRADES_ENABLED', nil)
           return true if value.nil?
@@ -56,20 +68,51 @@ module PuppetX
           true
         end
 
+        # Raw `winget upgrade` output, memoized per process so the
+        # `winget_upgrades` and `winget_upgrades_detail` facts share a single
+        # invocation. Only memoized for the default (nil) path: explicit path
+        # overrides (used in tests) always run fresh.
         # @param path [String, nil] Optional override for the winget path (testing)
-        # @return [Array<String>] Package IDs with an available upgrade ([] when absent/error/disabled)
-        def winget_upgrades(path = nil)
-          return [] unless upgrades_enabled?
+        # @return [String, nil] Raw command output, or nil when disabled/absent/failed
+        def upgrade_output(path = nil)
+          return run_upgrade(path) unless path.nil?
+
+          @upgrade_output = run_upgrade(nil) if @upgrade_output.nil?
+          @upgrade_output
+        end
+
+        # Single uncached `winget upgrade` run. Never raises.
+        # @param path [String, nil] Optional override for the winget path (testing)
+        # @return [String, nil] Raw command output, or nil when disabled/absent/failed
+        def run_upgrade(path)
+          return nil unless upgrades_enabled?
 
           winget = path || winget_path
-          return [] unless winget && File.exist?(winget)
+          return nil unless winget && File.exist?(winget)
 
           require 'puppet/util/execution'
           output = Puppet::Util::Execution.execute(
             [winget, 'upgrade', '--accept-source-agreements', '--disable-interactivity'],
             failonfail: false, combine: true,
           )
-          parse_winget_upgrade(output.to_s)
+          output.to_s
+        rescue StandardError
+          nil
+        end
+
+        # @param path [String, nil] Optional override for the winget path (testing)
+        # @return [Array<String>] Package IDs with an available upgrade ([] when absent/error/disabled)
+        def winget_upgrades(path = nil)
+          parse_winget_upgrade(upgrade_output(path))
+        rescue StandardError
+          []
+        end
+
+        # @param path [String, nil] Optional override for the winget path (testing)
+        # @return [Array<Hash>] Upgrade rows with 'id', 'current_version' and
+        #   'available_version' keys ([] when absent/error/disabled)
+        def upgrade_details(path = nil)
+          parse_upgrade_details(upgrade_output(path))
         rescue StandardError
           []
         end
@@ -90,6 +133,133 @@ module PuppetX
         # @param output [String, nil] Raw output from `winget upgrade`
         # @return [Array<String>] Deduplicated package IDs
         def parse_winget_upgrade(output)
+          ids = []
+          return ids if output.nil? || output.empty?
+
+          lines = output.lines.map(&:chomp).reject(&:empty?)
+
+          header_indices = lines.each_index.select { |i| table_header?(lines[i]) }
+          return ids if header_indices.empty?
+
+          header_indices.each do |header_idx|
+            id_start, version_start = column_offsets(lines[header_idx])
+            next unless id_start && version_start
+
+            data_lines = lines[(header_idx + 2)..] || []
+            data_lines.each do |line|
+              break if table_header?(line)
+              next if line.match?(%r{^[-=]+\s*$})
+              next if line.length < version_start
+
+              id = line[id_start...version_start]&.strip
+              next if id.nil? || id.empty?
+              next if id.match?(%r{\s})
+
+              ids << id unless ids.include?(id)
+            end
+          end
+
+          ids
+        end
+
+        # Parse `winget upgrade` table output into structured rows with the
+        # installed and available versions. Same table handling as
+        # `parse_winget_upgrade`, plus the Available column (English
+        # `Available`, French `Disponible`): versions are single tokens, so
+        # the available cell is read as the first token at its offset (the
+        # Source column may follow on the same row). Tables without an
+        # Available column yield rows with nil versions.
+        # @param output [String, nil] Raw output from `winget upgrade`
+        # @return [Array<Hash>] Deduplicated rows ('id', 'current_version', 'available_version')
+        def parse_upgrade_details(output)
+          rows = []
+          seen = []
+          return rows if output.nil? || output.empty?
+
+          lines = output.lines.map(&:chomp).reject(&:empty?)
+
+          header_indices = lines.each_index.select { |i| table_header?(lines[i]) }
+          return rows if header_indices.empty?
+
+          header_indices.each do |header_idx|
+            id_start, version_start = column_offsets(lines[header_idx])
+            next unless id_start && version_start
+
+            available_start = available_offset(lines[header_idx], version_start)
+            data_lines = lines[(header_idx + 2)..] || []
+            data_lines.each do |line|
+              break if table_header?(line)
+              next if line.match?(%r{^[-=]+\s*$})
+              next if line.length < version_start
+
+              id = line[id_start...version_start]&.strip
+              next if id.nil? || id.empty?
+              next if id.match?(%r{\s})
+              next if seen.include?(id)
+
+              seen << id
+              current = nil
+              available = nil
+              if available_start
+                current = line[version_start...available_start]&.strip
+                current = nil if current.nil? || current.empty?
+                rest = line[available_start..]&.strip
+                available = (rest.nil? || rest.empty?) ? nil : rest.split(%r{\s+}).first
+              end
+              rows << { 'id' => id, 'current_version' => current, 'available_version' => available }
+            end
+          end
+
+          rows
+        end
+
+        # Raw `winget pin list` output, memoized per process (nil path only;
+        # explicit path overrides always run fresh). Never raises.
+        # @param path [String, nil] Optional override for the winget path (testing)
+        # @return [String, nil] Raw command output, or nil when absent/failed
+        def pins_output(path = nil)
+          return run_pins(path) unless path.nil?
+
+          @pins_output = run_pins(nil) if @pins_output.nil?
+          @pins_output
+        end
+
+        # Single uncached `winget pin list` run. A non-zero exit (old winget
+        # without `pin`, or any failure) is treated as "no pins". Never raises.
+        # @param path [String, nil] Optional override for the winget path (testing)
+        # @return [String, nil] Raw command output, or nil when absent/failed
+        def run_pins(path)
+          winget = path || winget_path
+          return nil unless winget && File.exist?(winget)
+
+          require 'puppet/util/execution'
+          output = Puppet::Util::Execution.execute(
+            [winget, 'pin', 'list', '--accept-source-agreements', '--disable-interactivity'],
+            failonfail: false, combine: true,
+          )
+          return nil unless output.exitstatus.zero?
+
+          output.to_s
+        rescue StandardError
+          nil
+        end
+
+        # @param path [String, nil] Optional override for the winget path (testing)
+        # @return [Array<String>] Pinned package IDs ([] when absent/unsupported/error)
+        def pinned_ids(path = nil)
+          parse_pin_list(pins_output(path))
+        rescue StandardError
+          []
+        end
+
+        # Parse `winget pin list` table output into pinned package IDs. Same
+        # fixed-width header-offset technique as the upgrade parser: the pin
+        # table carries extra trailing columns (pin type), but the Id cell is
+        # sliced between the Id and Version header offsets. Output without a
+        # recognizable table (e.g. "No pins exist") yields [].
+        # @param output [String, nil] Raw output from `winget pin list`
+        # @return [Array<String>] Deduplicated pinned package IDs
+        def parse_pin_list(output)
           ids = []
           return ids if output.nil? || output.empty?
 
@@ -142,6 +312,22 @@ module PuppetX
           return [nil, nil] unless id_start && version_start && version_start > id_start
 
           [id_start, version_start]
+        end
+
+        # Locate the Available column start in a `winget upgrade` table
+        # header (English `Available`, French `Disponible`), searched after
+        # the Version column.
+        # @param header [String] Header line of a `winget upgrade` table
+        # @param version_start [Integer] Offset of the Version column
+        # @return [Integer, nil] Offset of the Available column, nil when absent
+        def available_offset(header, version_start)
+          tail = header[version_start + VERSION_HEADER_LENGTH..]
+          return nil unless tail
+
+          match = tail.match(%r{\b(Available|Disponible)\b}i)
+          return nil unless match
+
+          version_start + VERSION_HEADER_LENGTH + match.begin(0)
         end
       end
     end

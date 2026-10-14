@@ -8,6 +8,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Class `winget::packages`: declares one `package` (winget provider) per
+  entry of a Hiera-friendly `Winget::PackagesHash` hash (shorthand ensure
+  strings or full `Winget::Package` hashes), with structured install
+  parameters (`source`, `scope`, `architecture`, `location`, `override`,
+  `installer_type`, `locale` translated into install flags), per-package
+  and class-level `schedule`, optional `reboot_resource` wiring, and a
+  `hold` flag mapped to `winget pin`
+- Provider `holdable` feature: `mark => hold` / `mark => none` map to
+  `winget pin add` / `winget pin remove` (idempotent, cached `pin list`
+  per run, hold re-applied after install/upgrade like dpkg); `mark` is
+  only reported when managed so plain resources pay no extra process
+- Defined type `winget::pin`: blocking (`blocking => true`) and gating
+  (`version => '1.2.*'`) pins beyond the provider plain-pin semantic
+- Class `winget::sources` and defined type `winget::source`: manage
+  `winget source add/remove` (private `Microsoft.Rest` sources, trust
+  level, explicit sources, `Sensitive` auth header) from a
+  Hiera-friendly `Winget::SourcesHash` hash, with an optional guarded
+  `winget source reset --force` first (`reset_defaults`)
+- Class `winget::upgrade`: new `respect_pins` parameter (default true,
+  skips IDs from the new `winget_pins` fact) and `reboot_resource`
+  parameter (optional notify wiring to a caller-declared `reboot`
+  resource from puppetlabs/reboot, so exit `0x8A150003` reboots)
+- Class `winget::packages`: same optional `reboot_resource` wiring
+- Structured facts `winget_upgrades_detail` (ID + current/available
+  versions for PuppetDB inventory) and `winget_pins` (fast local
+  `winget pin list`); both upgrade facts share one memoized
+  `winget upgrade` invocation per agent run
+- Class `winget::settings`: manages `settings.json` for the agent
+  account (arbitrary settings + `experimental_features`, e.g. machine
+  install-scope preference and telemetry)
+- Defined type `winget::configure`: applies a `winget configure` file
+  idempotently (guarded by `winget configure test`)
+- Bolt/PE tasks `winget::list_upgrades` (read-only upgrade inventory)
+  and `winget::upgrade_now` (`ids`/`exclude`/`include_pinned`,
+  reboot-aware JSON summary) for on-demand upgrades outside agent runs
+- Data types `Winget::Package`, `Winget::PackagesHash`, `Winget::SourceEntry`,
+  `Winget::SourcesHash` (`types/`) for structured, validated parameters
+  (suffixed because Puppet folds definition names case-insensitively:
+  unsuffixed names would collide with the classes/define)
+- Community files: `SECURITY.md`, `CODEOWNERS`, `CODE_OF_CONDUCT.md`
+- Provider `install_options` source detection now also handles the
+  separate-element pair form (`['--source', 'msstore']`, as produced by
+  the structured `source` key) without duplicating the flag
 - Provider `self.prefetch(resources)` with a class-level `winget list`
   cache: N `package` resources now share a single listing instead of one
   listing per resource (use `clear_list_cache!` / `reset!` to invalidate)

@@ -122,6 +122,59 @@ describe 'winget::upgrade' do
         it { is_expected.to contain_schedule('custom-window').with_period('daily').with_range('2 - 4') }
         it { is_expected.to contain_package('Git.Git').with_schedule('custom-window') }
       end
+
+      context 'with pinned packages' do
+        let(:facts) do
+          os_facts.merge(
+            'winget_upgrades' => ['Git.Git', 'Google.Chrome'],
+            'winget_pins' => ['google.chrome'],
+          )
+        end
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_package('Git.Git').with_ensure('latest') }
+        it { is_expected.not_to contain_package('Google.Chrome') }
+      end
+
+      context 'with respect_pins => false' do
+        let(:facts) do
+          os_facts.merge(
+            'winget_upgrades' => ['Git.Git', 'Google.Chrome'],
+            'winget_pins' => ['google.chrome'],
+          )
+        end
+        let(:params) { { respect_pins: false } }
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_package('Google.Chrome').with_ensure('latest') }
+      end
+
+      context 'with an undef pins fact (older agent)' do
+        let(:facts) do
+          os_facts.merge('winget_upgrades' => ['Git.Git'])
+        end
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_package('Git.Git').with_ensure('latest') }
+      end
+
+      context 'with reboot_resource' do
+        let(:params) { { reboot_resource: 'maintenance-reboot' } }
+        let(:pre_condition) do
+          <<~PUPPET
+            define reboot($when = pending) {
+              notify { "reboot-stub-${title}": }
+            }
+            reboot { 'maintenance-reboot':
+              when => pending,
+            }
+          PUPPET
+        end
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_package('Git.Git').with_notify('Reboot[maintenance-reboot]') }
+        it { is_expected.to contain_package('Notepad++.Notepad++').with_notify('Reboot[maintenance-reboot]') }
+      end
     end
   end
 

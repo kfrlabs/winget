@@ -7,7 +7,9 @@
 # - Confines to Windows only
 # - Is NOT the default provider (explicit opt-in only)
 # - Requires winget to be installed; returns unsuitable with clear message if absent
-# - Supports: installable, uninstallable, upgradeable, versionable, install_options, uninstall_options
+# - Supports: installable, uninstallable, upgradeable, versionable, install_options, uninstall_options, holdable
+#   (hold/unhold map to `winget pin add/remove`; `mark => hold` excludes the
+#   package from `winget upgrade --all` while explicit upgrades still work)
 # - Appends non-interactive flags AFTER the subcommand, using only flags
 #   documented for that subcommand (install/upgrade: package+source
 #   agreements, no-interactivity, exact, silent; uninstall: minus package
@@ -50,6 +52,8 @@ unless defined?(::PuppetX::Winget::Provider::EXIT_SUCCESS)
         UNINSTALL_FLAGS = ['--accept-source-agreements', '--disable-interactivity', '--exact', '--silent'].freeze
         SHOW_FLAGS = ['--accept-source-agreements', '--disable-interactivity', '--exact'].freeze
         LIST_FLAGS = ['--accept-source-agreements', '--disable-interactivity'].freeze
+        PIN_FLAGS = ['--accept-source-agreements', '--disable-interactivity', '--exact'].freeze
+        PIN_LIST_FLAGS = ['--accept-source-agreements', '--disable-interactivity'].freeze
       end
     end
   end
@@ -72,7 +76,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   # already means this provider is never selected by default, so no
   # call is needed to achieve that behavior.
 
-  has_feature :installable, :uninstallable, :upgradeable, :versionable, :install_options, :uninstall_options
+  has_feature :installable, :uninstallable, :upgradeable, :versionable, :install_options, :uninstall_options, :holdable
 
   # Include exit code constants
   include PuppetX::Winget::Provider
@@ -88,6 +92,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     def reset!
       @winget_path = nil
       @instances_list = nil
+      @pins_list = nil
       @suitability_warned = nil
       PuppetX::Winget::PathResolver.reset!
     end
@@ -97,6 +102,14 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     # so the next lookup observes the new state.
     def clear_list_cache!
       @instances_list = nil
+    end
+
+    # Clear the class-level `winget pin list` cache without touching the
+    # memoized path. Called after a successful hold/unhold, and alongside
+    # the list cache after install/uninstall/upgrade (pins follow the
+    # package lifecycle) so the next lookup observes the new state.
+    def clear_pins_cache!
+      @pins_list = nil
     end
 
     # Prefetch installed packages once for all resources in the catalog.
@@ -228,17 +241,71 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     packages
   end
 
-  # Query the current state of the package
+  # Query the current state of the package.
+  # The `mark` property (holdable feature, backed by `winget pin`) is only
+  # reported when the resource manages it: plain package resources therefore
+  # never pay for an extra `winget pin list` process.
   # @return [Hash, nil] Current package properties or nil if not installed
   def query
     pkg = installed_entry
     return nil unless pkg
 
-    {
+    result = {
       name: pkg[:id],
       ensure: pkg[:version],
       provider: :winget
     }
+    result[:mark] = pinned? ? :hold : :none if mark_managed?
+    result
+  end
+
+  # Whether the resource manages the `mark` property (holdable feature).
+  # @return [Boolean] True when `mark` is set on the resource
+  def mark_managed?
+    !resource[:mark].nil?
+  end
+
+  # Whether the package is currently pinned (`winget pin list`).
+  # @return [Boolean] True when a pin exists for the package
+  def pinned?
+    self.class.pins_list.key?(resource[:name].downcase)
+  end
+
+  # Place a hold on the package (`winget pin add`). A pinned package is
+  # excluded from `winget upgrade --all` but still allows an explicit
+  # `winget upgrade --id` (i.e. `ensure => latest` on this resource keeps
+  # working: the hold only blocks unattended bulk upgrades).
+  def hold
+    return nil if pinned?
+
+    output = pin_exec('add')
+    unless output.exitstatus == PuppetX::Winget::Provider::EXIT_SUCCESS
+      raise Puppet::Error, _('Failed to pin package \'%{name}\': %{output}') % { name: resource[:name], output: output }
+    end
+    self.class.clear_pins_cache!
+    clear_installed_entry!
+    nil
+  end
+
+  # Release the hold on the package (`winget pin remove`).
+  def unhold
+    return nil unless pinned?
+
+    output = pin_exec('remove')
+    unless output.exitstatus == PuppetX::Winget::Provider::EXIT_SUCCESS
+      raise Puppet::Error, _('Failed to unpin package \'%{name}\': %{output}') % { name: resource[:name], output: output }
+    end
+    self.class.clear_pins_cache!
+    clear_installed_entry!
+    nil
+  end
+
+  # Execute a `winget pin` subcommand non-interactively for this resource.
+  # @param action [String] Pin subcommand ('add' or 'remove')
+  # @return [Puppet::Util::Execution::ProcessOutput] Combined command output with exitstatus
+  def pin_exec(action)
+    args = ['pin', action, '--id', resource[:name], *PuppetX::Winget::Provider::PIN_FLAGS]
+    Puppet::Util::Execution.execute([self.class.winget_path, *args], failonfail: false, combine: true)
   end
 
   # Installed package entry from `winget list`. Prefetched once per run
@@ -287,6 +354,32 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     {}
   end
 
+  # Get the set of pinned package IDs, cached at class level for the
+  # duration of the run. Keys are lowercase IDs. Use `clear_pins_cache!`
+  # (or `reset!` in tests) to invalidate. Never raises: returns {} when
+  # winget is unsuitable or the listing fails.
+  # @return [Hash{String => true}] Pinned package IDs (lowercase)
+  def self.pins_list
+    return @pins_list if defined?(@pins_list) && !@pins_list.nil?
+
+    @pins_list = fetch_pins_list
+  end
+
+  # Single uncached `winget pin list` run. Pin table parsing is shared with
+  # the `winget_pins` fact helper so the provider and the facts agree on
+  # pin state.
+  # @return [Hash{String => true}] Pinned package IDs (lowercase)
+  def self.fetch_pins_list
+    return {} unless suitable?
+
+    require 'puppet_x/winget/facts'
+    ids = PuppetX::Winget::Facts.pinned_ids(winget_path)
+    ids.each_with_object({}) { |id, memo| memo[id.downcase] = true }
+  rescue StandardError => e
+    Puppet.debug("winget pin list failed: #{e.message}")
+    {}
+  end
+
   # Return all installed packages as provider instances
   def self.instances
     instances_list.map do |_id, pkg|
@@ -312,9 +405,10 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     # Additional install_options (filter out hash options we already handled)
     extra_args = resource[:install_options]
     if extra_args.is_a?(Array)
-      extra_args.each do |opt|
+      extra_args.each_with_index do |opt, i|
         next if opt.is_a?(Hash) && (opt.key?(:source) || opt.key?('source'))
-        next if opt.is_a?(String) && opt.match?(%r{^--source[= ]})
+        next if opt.is_a?(String) && opt.match?(%r{^--source([= ].*)?$})
+        next if i.positive? && extra_args[i - 1] == '--source'
         args << opt
       end
     end
@@ -322,7 +416,9 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     output = winget_exec(*args)
     handle_exit_code(output, 'install')
     self.class.clear_list_cache!
+    self.class.clear_pins_cache!
     clear_installed_entry!
+    hold if resource[:mark] == :hold
   end
 
   # Uninstall a package
@@ -336,6 +432,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     output = winget_exec(*args)
     handle_exit_code(output, 'uninstall')
     self.class.clear_list_cache!
+    self.class.clear_pins_cache!
     clear_installed_entry!
   end
 
@@ -354,9 +451,10 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     # Additional install_options (filter out hash options we already handled)
     extra_args = resource[:install_options]
     if extra_args.is_a?(Array)
-      extra_args.each do |opt|
+      extra_args.each_with_index do |opt, i|
         next if opt.is_a?(Hash) && (opt.key?(:source) || opt.key?('source'))
-        next if opt.is_a?(String) && opt.match?(%r{^--source[= ]})
+        next if opt.is_a?(String) && opt.match?(%r{^--source([= ].*)?$})
+        next if i.positive? && extra_args[i - 1] == '--source'
         args << opt
       end
     end
@@ -367,8 +465,10 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
       install
     else
       handle_exit_code(output, 'upgrade')
+      hold if resource[:mark] == :hold
     end
     self.class.clear_list_cache!
+    self.class.clear_pins_cache!
     clear_installed_entry!
   end
 
@@ -421,11 +521,13 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     opts = resource[:install_options]
     return nil unless opts.is_a?(Array)
 
-    opts.each do |opt|
+    opts.each_with_index do |opt, i|
       case opt
       when String
         if opt.match?(%r{^--source[= ](.+)$})
           return Regexp.last_match(1)
+        elsif opt == '--source' && opts[i + 1].is_a?(String)
+          return opts[i + 1]
         end
       when Hash
         return opt[:source] if opt.key?(:source)
