@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
-# Litmus acceptance test for the winget module.
-# Run with: bundle exec rake 'litmus:acceptance:parallel'
+# Litmus acceptance test for the winget module (local runs only).
+# CI does not use Litmus: the `acceptance` job applies the module with a real
+# Puppet agent on windows-latest instead (see .github/workflows/ci.yml).
+# Run locally with: bundle exec rake 'litmus:acceptance:parallel'
 # Requires a provisioned Windows target (see README "Acceptance Testing").
 require 'spec_helper_acceptance'
 

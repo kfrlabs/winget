@@ -1,5 +1,5 @@
 # This file is managed by hand (not PDK-synced) so the pipeline can cover
-# Litmus on Windows, REFERENCE.md freshness and Puppet 7/8 matrix testing.
+# puppet apply on Windows, REFERENCE.md freshness and Puppet 7/8 matrix testing.
 name: CI
 
 on:
@@ -71,32 +71,71 @@ jobs:
           if-no-files-found: ignore
 
   acceptance:
-    name: 'Acceptance (Litmus, Windows)'
+    name: 'Acceptance (puppet apply, Windows)'
     runs-on: windows-latest
-    env:
-      PUPPET_GEM_VERSION: '~> 8.0'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1
-        with:
-          ruby-version: '3.2'
-          bundler-cache: true
-      - name: Validate module on Windows
-        shell: bash
-        run: bundle exec rake syntax lint metadata_lint rubocop
-      - name: Run Litmus acceptance tests
-        # Requires a provisioned Windows target (see spec/acceptance/README).
-        # Without an inventory the step validates the suite instead of failing.
-        shell: bash
+      - name: Install Puppet agent
+        shell: powershell
         run: |
-          if [ -f spec/fixtures/litmus_inventory.yaml ] || [ -f inventory.yaml ]; then
-            bundle exec rake 'litmus:acceptance:parallel'
-          else
-            echo 'No Litmus inventory found; checking acceptance suite syntax only.'
-            bundle exec rake syntax
-          fi
+          choco install puppet-agent -y --no-progress
+          'C:\Program Files\Puppet Labs\Puppet\bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Check Puppet version
+        shell: powershell
+        run: puppet --version
+      - name: Stage module into the agent modulepath
+        # The repo root is the module; Puppet expects it under a directory
+        # named after the module (`winget`, not `kfrlabs-winget`).
+        shell: powershell
+        run: |
+          $ModuleDir = 'C:\ProgramData\PuppetLabs\puppet\etc\modules\winget'
+          New-Item -ItemType Directory -Force -Path $ModuleDir | Out-Null
+          Copy-Item -Path "$env:GITHUB_WORKSPACE\*" -Destination $ModuleDir -Recurse -Force -Exclude '.git'
+          Get-ChildItem $ModuleDir | Select-Object Name
+      - name: Write acceptance manifest
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\Temp | Out-Null
+          @"
+          class { 'winget':
+            ensure => present,
+          }
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_acceptance.pp
+          Get-Content C:\Temp\winget_acceptance.pp
+      - name: Apply bootstrap (run 1, changes allowed)
+        shell: powershell
+        run: |
+          puppet apply --detailed-exitcodes --modulepath 'C:\ProgramData\PuppetLabs\puppet\etc\modules' C:\Temp\winget_acceptance.pp
+          $code = $LASTEXITCODE
+          if ($code -eq 0 -or $code -eq 2) { exit 0 } else { exit $code }
+      - name: Apply bootstrap again (run 2, must be idempotent)
+        shell: powershell
+        run: |
+          puppet apply --detailed-exitcodes --modulepath 'C:\ProgramData\PuppetLabs\puppet\etc\modules' C:\Temp\winget_acceptance.pp
+          $code = $LASTEXITCODE
+          if ($code -eq 0) { exit 0 } else { Write-Error "Second apply exited with $code, expected 0 (idempotent)."; exit $code }
+      - name: winget CLI is functional
+        shell: powershell
+        run: winget --version
+      - name: Provider loads in noop (no changes made)
+        # Compiles a catalog with a winget package and evaluates it noop:
+        # proves the provider is suitable on the runner without installing
+        # anything (query/latest are read-only under --noop).
+        shell: powershell
+        run: |
+          @"
+          class { 'winget':
+            ensure => present,
+          }
+          package { 'Git.Git':
+            ensure   => present,
+            provider => winget,
+          }
+          Class['winget'] -> Package['Git.Git']
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_provider_noop.pp
+          puppet apply --noop --modulepath 'C:\ProgramData\PuppetLabs\puppet\etc\modules' C:\Temp\winget_provider_noop.pp
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   build:
     name: 'Build module package (pdk build)'
