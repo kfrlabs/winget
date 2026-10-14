@@ -270,7 +270,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   def query
     pkg = installed_entry
     if self.class.list_unavailable?
-      raise Puppet::Error, _("Cannot determine whether package %{name} is installed: winget list failed this run") % { name: resource[:name] }
+      raise Puppet::Error, _('Cannot determine whether package %{name} is installed: winget list failed this run') % { name: resource[:name] }
     end
 
     return nil unless pkg
