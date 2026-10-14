@@ -9,7 +9,7 @@
   is empty. Prints a JSON summary; exit code is 0 unless winget itself is
   missing or no enumeration was possible. Per-package installer failures are
   reported in the JSON result, not as task failure. A reboot-requesting
-  installer (exit 0x8A150003) counts as success with `reboot_required: true`.
+  installer (exit 0x8A150109/0x8A15010A/0x8A15010B) counts as success with `reboot_required: true`.
 #>
 [CmdletBinding()]
 param()
@@ -19,12 +19,16 @@ param()
 # failure mode is handled explicitly via exit codes below.
 $ErrorActionPreference = 'Continue'
 
-# winget exit codes (subset relevant to upgrades).
+# winget exit codes (subset relevant to upgrades, verified against
+# https://github.com/microsoft/winget-cli/blob/master/doc/windows/package-manager/winget/returnCodes.md).
 $EXIT_SUCCESS = 0
-$EXIT_NO_APPLICABLE_INSTALLER = [uint32]0x8A150001
-$EXIT_NO_UPGRADE_AVAILABLE = [uint32]0x8A150002
-$EXIT_REBOOT_REQUIRED = [uint32]0x8A150003
 $EXIT_UPDATE_NOT_APPLICABLE = [uint32]0x8A15002B
+$EXIT_PACKAGE_ALREADY_INSTALLED = [uint32]0x8A150061
+$EXIT_INSTALL_ALREADY_INSTALLED = [uint32]0x8A15010D
+$EXIT_REBOOT_REQUIRED_TO_FINISH = [uint32]0x8A150109
+$EXIT_REBOOT_REQUIRED_FOR_INSTALL = [uint32]0x8A15010A
+$EXIT_REBOOT_INITIATED = [uint32]0x8A15010B
+$EXIT_NO_APPLICABLE_INSTALLER = [uint32]0x8A150010
 
 function Read-TaskParams {
   $params = @{ ids = @(); exclude = @(); include_pinned = $false }
@@ -161,10 +165,10 @@ foreach ($id in $targets) {
   $code = [uint32]$LASTEXITCODE
   if ($code -eq $EXIT_SUCCESS) {
     $upgraded += $id
-  } elseif ($code -eq $EXIT_REBOOT_REQUIRED) {
+  } elseif ($code -eq $EXIT_REBOOT_REQUIRED_TO_FINISH -or $code -eq $EXIT_REBOOT_REQUIRED_FOR_INSTALL -or $code -eq $EXIT_REBOOT_INITIATED) {
     $upgraded += $id
     $rebootRequired = $true
-  } elseif ($code -eq $EXIT_NO_UPGRADE_AVAILABLE -or $code -eq $EXIT_UPDATE_NOT_APPLICABLE -or $code -eq $EXIT_NO_APPLICABLE_INSTALLER) {
+  } elseif ($code -eq $EXIT_UPDATE_NOT_APPLICABLE -or $code -eq $EXIT_PACKAGE_ALREADY_INSTALLED -or $code -eq $EXIT_INSTALL_ALREADY_INSTALLED) {
     $alreadyCurrent += $id
   } else {
     $failed += @{ id = $id; exit_code = $code }
