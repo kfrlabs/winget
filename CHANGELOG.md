@@ -31,10 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parameter (optional notify wiring to a caller-declared `reboot`
   resource from puppetlabs/reboot, so exit `0x8A150003` reboots)
 - Class `winget::packages`: same optional `reboot_resource` wiring
-- Structured facts `winget_upgrades_detail` (ID + current/available
-  versions for PuppetDB inventory) and `winget_pins` (fast local
-  `winget pin list`); both upgrade facts share one memoized
-  `winget upgrade` invocation per agent run
+- Structured facts `winget_upgrades` (ID + current/available
+  versions for PuppetDB inventory, read by `winget::upgrade`) and
+  `winget_pins` (fast local `winget pin list`); the upgrade fact memoizes
+  its `winget upgrade` invocation per agent run
 - Class `winget::settings`: manages `settings.json` for the agent
   account (arbitrary settings + `experimental_features`, e.g. machine
   install-scope preference and telemetry)

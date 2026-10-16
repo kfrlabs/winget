@@ -5,16 +5,16 @@ require 'puppet_x/winget/path_resolver'
 # Facts helper for winget facts.
 #
 # Centralizes the logic behind the `winget_path`, `winget_version`,
-# `winget_upgrades`, `winget_upgrades_detail` and `winget_pins` facts so it
+# `winget_upgrades` and `winget_pins` facts so it
 # can be unit tested without depending on the Facter confine context.
 # Helpers never raise: they return nil/[] when winget is absent or when any
-# error occurs. Note `winget_upgrades` and `winget_upgrades_detail` shell out
-# to `winget upgrade` (source round-trips, a few seconds) and share a single
+# error occurs. Note `winget_upgrades` shells out
+# to `winget upgrade` (source round-trips, a few seconds) with a single
 # memoized invocation per process, while `winget_pins` is a fast local
 # `winget pin list` query. To avoid paying the upgrade cost on every agent
-# run, either cache the facts with a TTL in facter.conf
+# run, either cache the fact with a TTL in facter.conf
 # (`facts: { ttls: [{ winget_upgrades: "1 day" }] }`) or opt out entirely with
-# `WINGET_UPGRADES_ENABLED=false` (upgrade facts then return []).
+# `WINGET_UPGRADES_ENABLED=false` (the upgrade fact then returns []).
 # rubocop:disable Style/ClassAndModuleChildren
 module PuppetX
   module Winget
@@ -53,12 +53,12 @@ module PuppetX
           nil
         end
 
-        # Whether the expensive `winget_upgrades`/`winget_upgrades_detail`
-        # facts may run. Opt out by setting `WINGET_UPGRADES_ENABLED` to a
+        # Whether the expensive `winget_upgrades`
+        # fact may run. Opt out by setting `WINGET_UPGRADES_ENABLED` to a
         # false-like value (`false`, `0`, `no`, `off`). Anything else
-        # (including unset) keeps the facts enabled for backward
+        # (including unset) keeps the fact enabled for backward
         # compatibility.
-        # @return [Boolean] False when the upgrade facts must return [] without shelling out
+        # @return [Boolean] False when the upgrade fact must return [] without shelling out
         def upgrades_enabled?
           value = ENV.fetch('WINGET_UPGRADES_ENABLED', nil)
           return true if value.nil?
@@ -69,8 +69,8 @@ module PuppetX
         end
 
         # Raw `winget upgrade` output, memoized per process so the
-        # `winget_upgrades` and `winget_upgrades_detail` facts share a single
-        # invocation. Only memoized for the default (nil) path: explicit path
+        # `winget_upgrades` fact only shells out once.
+        # Only memoized for the default (nil) path: explicit path
         # overrides (used in tests) always run fresh.
         # @param path [String, nil] Optional override for the winget path (testing)
         # @return [String, nil] Raw command output, or nil when disabled/absent/failed
@@ -101,77 +101,36 @@ module PuppetX
         end
 
         # @param path [String, nil] Optional override for the winget path (testing)
-        # @return [Array<String>] Package IDs with an available upgrade ([] when absent/error/disabled)
+        # @return [Array<Hash>] Upgrade rows with 'id', 'current_version' and
+        #   'available_version' keys ([] when absent/error/disabled)
         def winget_upgrades(path = nil)
           parse_winget_upgrade(upgrade_output(path))
         rescue StandardError
           []
         end
 
-        # @param path [String, nil] Optional override for the winget path (testing)
-        # @return [Array<Hash>] Upgrade rows with 'id', 'current_version' and
-        #   'available_version' keys ([] when absent/error/disabled)
-        def upgrade_details(path = nil)
-          parse_upgrade_details(upgrade_output(path))
-        rescue StandardError
-          []
-        end
-
-        # Parse `winget upgrade` table output into package IDs.
-        # Columns are sliced at the header offsets (fixed-width table) instead
-        # of split on whitespace: winget shrinks the gap between two columns
-        # to a single space for long names (truncated with `…`), so a
-        # whitespace split shifts every column (the installed version is then
-        # read as the ID) or glues ID and version together (package skipped).
-        # The header match stays language-agnostic (Nom / Disponible on French
-        # systems). Rows shorter than the Version column (e.g. the "N upgrades
-        # available." footer) are skipped: package IDs never contain spaces.
+        # Parse `winget upgrade` table output into structured rows with the
+        # installed and available versions. Columns are sliced at the header
+        # offsets (fixed-width table) instead of split on whitespace: winget
+        # shrinks the gap between two columns to a single space for long
+        # names (truncated with `…`), so a whitespace split shifts every
+        # column (the installed version is then read as the ID) or glues ID
+        # and version together (package skipped). The header match stays
+        # language-agnostic (Nom / Disponible on French systems). Rows
+        # shorter than the Version column (e.g. the "N upgrades available."
+        # footer) are skipped: package IDs never contain spaces.
         # `winget upgrade` may print several tables (upgrades, then packages
         # requiring explicit targeting when some versions are unknown), each
         # with its own header: every table is parsed with its own offsets so
         # a later header's `Id` cell is never mistaken for a package ID.
-        # @param output [String, nil] Raw output from `winget upgrade`
-        # @return [Array<String>] Deduplicated package IDs
-        def parse_winget_upgrade(output)
-          ids = []
-          return ids if output.nil? || output.empty?
-
-          lines = output.lines.map(&:chomp).reject(&:empty?)
-
-          header_indices = lines.each_index.select { |i| table_header?(lines[i]) }
-          return ids if header_indices.empty?
-
-          header_indices.each do |header_idx|
-            id_start, version_start = column_offsets(lines[header_idx])
-            next unless id_start && version_start
-
-            data_lines = lines[(header_idx + 2)..] || []
-            data_lines.each do |line|
-              break if table_header?(line)
-              next if line.match?(%r{^[-=]+\s*$})
-              next if line.length < version_start
-
-              id = line[id_start...version_start]&.strip
-              next if id.nil? || id.empty?
-              next if id.match?(%r{\s})
-
-              ids << id unless ids.include?(id)
-            end
-          end
-
-          ids
-        end
-
-        # Parse `winget upgrade` table output into structured rows with the
-        # installed and available versions. Same table handling as
-        # `parse_winget_upgrade`, plus the Available column (English
-        # `Available`, French `Disponible`): versions are single tokens, so
-        # the available cell is read as the first token at its offset (the
-        # Source column may follow on the same row). Tables without an
-        # Available column yield rows with nil versions.
+        # The Available column (English `Available`, French `Disponible`)
+        # holds versions as single tokens, so the available cell is read as
+        # the first token at its offset (the Source column may follow on the
+        # same row). Tables without an Available column yield rows with nil
+        # versions.
         # @param output [String, nil] Raw output from `winget upgrade`
         # @return [Array<Hash>] Deduplicated rows ('id', 'current_version', 'available_version')
-        def parse_upgrade_details(output)
+        def parse_winget_upgrade(output)
           rows = []
           seen = []
           return rows if output.nil? || output.empty?
