@@ -465,8 +465,7 @@ Default value: `['msstore', 'winget', 'winget-font']`
 
 Reads structured upgrade rows from the `winget_upgrades` fact (one hash
 with `id`, `current_version` and `available_version` per package) and
-declares one `package`
-resource with `ensure => latest` (winget provider) per ID. Upgrades are
+declares one `package` resource with `ensure => latest` (winget provider) per ID. Upgrades are
 therefore regular Puppet resources (reporting, noop, `--tags`) instead of
 an out-of-band scheduled task script.
 
