@@ -515,6 +515,20 @@ class { 'winget::upgrade':
 }
 ```
 
+##### Upgrade only selected packages, if installed
+
+```puppet
+class { 'winget::upgrade':
+  only => ['Google.Chrome'],
+}
+# Hiera equivalent (automatic parameter lookup):
+# winget::upgrade::only:
+#   - Google.Chrome
+# Absent IDs declare no resource and are never installed (unlike
+# `package { ensure => latest }`), because IDs are matched against the
+# `winget_upgrades` fact which only lists installed packages.
+```
+
 ##### Reuse a schedule declared elsewhere
 
 ```puppet
