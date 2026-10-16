@@ -29,7 +29,7 @@ describe 'winget::settings' do
       context 'with settings' do
         let(:params) do
           {
-            settings: {
+            config: {
               'telemetry' => { 'disable' => true },
             },
           }

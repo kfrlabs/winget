@@ -203,15 +203,15 @@ class { 'winget::upgrade':
 
 #### Declaring Packages from Hiera (`winget::packages`)
 
-The `winget::packages` class reads a `Winget::PackagesHash` hash (automatic
-Hiera lookup via `winget::packages::packages`, see `types/`) and declares
-one `package` with the winget provider per entry. Entries accept either a
-shorthand ensure string or a full hash with structured install parameters,
-an optional `schedule`, and a `hold` flag:
+The `winget` class reads a `Winget::PackagesHash` hash (Hiera key
+`winget::packages`, see `types/`) and declares one `package` with the winget
+provider per entry. Entries accept either a shorthand ensure string or a
+full hash with structured install parameters, an optional `schedule`, and a
+`hold` flag:
 
 ```yaml
 # hiera.yaml
-winget::packages::packages:
+winget::packages:
   Git.Git:
     ensure: present
     scope: machine
@@ -223,9 +223,21 @@ winget::packages::packages:
 ```
 
 ```puppet
-include winget::packages
+include winget
+```
 
-# Guarantee ordering: bootstrap before packages
+Direct use of the sub-class (e.g. with its own `schedule`) stays possible
+via the `winget::packages::entries` key:
+
+```yaml
+# hiera.yaml
+winget::packages::entries:
+  Git.Git:
+    ensure: present
+```
+
+```puppet
+include winget::packages
 Class['winget'] -> Class['winget::packages']
 ```
 
@@ -299,7 +311,7 @@ winget::source { 'contoso':
 
 ```yaml
 # hiera.yaml
-winget::sources::sources:
+winget::sources:
   contoso:
     url: https://winget.contoso.example.com/cache
     source_type: Microsoft.Rest
@@ -307,10 +319,32 @@ winget::sources::sources:
 ```
 
 ```puppet
+include winget
+```
+
+For a reset to the defaults first:
+
+```puppet
+class { 'winget':
+  sources                => {
+    'contoso' => {
+      url         => 'https://winget.contoso.example.com/cache',
+      source_type => 'Microsoft.Rest',
+      trust_level => 'trusted',
+    },
+  },
+  sources_reset_defaults => true,
+}
+```
+
+Direct use of the sub-class stays possible via the
+`winget::sources::entries` key:
+
+```puppet
 class { 'winget::sources':
+  entries        => { 'contoso' => 'https://winget.contoso.example.com/cache' },
   reset_defaults => true,
 }
-
 Class['winget'] -> Class['winget::sources']
 ```
 
@@ -328,7 +362,7 @@ sees them as absent and reinstalls on every run). Prefer machine scope for
 agent-managed packages:
 
 ```puppet
-class { 'winget::packages':
+class { 'winget':
   packages => {
     'Git.Git' => {
       ensure => installed,

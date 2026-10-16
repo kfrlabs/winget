@@ -2,9 +2,12 @@
 
 # @summary Declare winget packages from a Hiera-friendly hash.
 #
-# Reads package declarations from the `packages` hash (automatic Hiera lookup
-# via `winget::packages::packages`, see `Winget::PackagesHash`) and declares one
-# `package` resource with the winget provider per entry. Entries accept either
+# Reads package declarations from the `entries` hash (Hiera key
+# `winget::packages::entries`, see `Winget::PackagesHash`) and declares one
+# `package` resource with the winget provider per entry. The common case is
+# driven from the main class (`winget::packages` Hiera key, which declares
+# this class automatically): use `include winget`.
+# Entries accept either
 # a shorthand ensure string or a full `Winget::Package` hash:
 #
 # - `ensure`, `install_options`, `uninstall_options` and `schedule` map to
@@ -29,7 +32,7 @@
 #
 #   Class['winget'] -> Class['winget::packages']
 #
-# @param packages
+# @param entries
 #   Packages to manage, keyed by winget ID. Values are either a shorthand
 #   ensure string or a `Winget::Package` hash.
 # @param schedule
@@ -43,21 +46,29 @@
 #   means no reboot wiring: installs still succeed with a warning, exactly
 #   like the provider default.
 #
-# @example Manage packages from Hiera
+# @example Manage packages from Hiera (preferred)
 #   # hiera.yaml:
-#   # winget::packages::packages:
+#   # winget::packages:
 #   #   Git.Git:
 #   #     ensure: present
 #   #     scope: machine
 #   #   Microsoft.VisualStudioCode:
 #   #     ensure: '1.95.0'
 #   #     hold: true
+#   include winget
+#
+# @example Manage packages via the sub-class directly
+#   # hiera.yaml:
+#   # winget::packages::entries:
+#   #   Git.Git:
+#   #     ensure: present
+#   #     scope: machine
 #   include winget::packages
 #   Class['winget'] -> Class['winget::packages']
 #
 # @example Structured install parameters
 #   class { 'winget::packages':
-#     packages => {
+#     entries => {
 #       'Git.Git' => {
 #         ensure       => '2.44.0',
 #         scope        => 'machine',
@@ -67,7 +78,7 @@
 #     },
 #   }
 class winget::packages (
-  Winget::PackagesHash $packages = {},
+  Winget::PackagesHash $entries = {},
   Optional[String[1]] $schedule = undef,
   Optional[String[1]] $reboot_resource = undef,
 ) {
@@ -80,7 +91,7 @@ class winget::packages (
     default => { 'notify' => Reboot[$reboot_resource] },
   }
 
-  $pairs = $packages.map |$id, $spec| {
+  $pairs = $entries.map |$id, $spec| {
     if $spec =~ String {
       $config = { 'ensure' => $spec }
     } else {

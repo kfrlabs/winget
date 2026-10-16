@@ -3,10 +3,11 @@
 # @summary Hash of winget package sources for `winget::sources`.
 #   Keys are winget source names. Values are either a shorthand URL string
 #   (added as a default source) or a full `Winget::SourceEntry` hash.
-#   Designed for Hiera (`winget::sources::sources`):
+#   Designed for Hiera (`winget::sources`, or `winget::sources::entries`
+#   when declaring the sub-class directly):
 #
 #   ```yaml
-#   winget::sources::sources:
+#   winget::sources:
 #     contoso: https://winget.contoso.example.com/cache
 #     partners:
 #       url: https://winget.partners.example.com/cache

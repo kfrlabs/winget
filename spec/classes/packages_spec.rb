@@ -16,7 +16,7 @@ describe 'winget::packages' do
       it { is_expected.to have_package_resource_count(0) }
 
       context 'with a shorthand string entry' do
-        let(:params) { { packages: { 'Git.Git' => 'installed' } } }
+        let(:params) { { entries: { 'Git.Git' => 'installed' } } }
 
         it { is_expected.to compile.with_all_deps }
 
@@ -28,7 +28,7 @@ describe 'winget::packages' do
       context 'with structured install parameters' do
         let(:params) do
           {
-            packages: {
+            entries: {
               'Git.Git' => {
                 'ensure'       => '2.44.0',
                 'scope'        => 'machine',
@@ -52,7 +52,7 @@ describe 'winget::packages' do
       context 'with location, override, locale, installer_type and extra options' do
         let(:params) do
           {
-            packages: {
+            entries: {
               'Git.Git' => {
                 'ensure'          => 'installed',
                 'location'        => 'C:/Tools/Git',
@@ -75,33 +75,33 @@ describe 'winget::packages' do
       end
 
       context 'with hold => true' do
-        let(:params) { { packages: { 'Git.Git' => { 'ensure' => 'installed', 'hold' => true } } } }
+        let(:params) { { entries: { 'Git.Git' => { 'ensure' => 'installed', 'hold' => true } } } }
 
         it { is_expected.to compile.with_all_deps }
         it { is_expected.to contain_package('Git.Git').with_mark('hold') }
       end
 
       context 'with hold => false' do
-        let(:params) { { packages: { 'Git.Git' => { 'ensure' => 'installed', 'hold' => false } } } }
+        let(:params) { { entries: { 'Git.Git' => { 'ensure' => 'installed', 'hold' => false } } } }
 
         it { is_expected.to compile.with_all_deps }
         it { is_expected.to contain_package('Git.Git').with_mark('none') }
       end
 
       context 'with hold on an absent package' do
-        let(:params) { { packages: { 'Git.Git' => { 'ensure' => 'absent', 'hold' => true } } } }
+        let(:params) { { entries: { 'Git.Git' => { 'ensure' => 'absent', 'hold' => true } } } }
 
         it { expect { catalogue }.to raise_error(Puppet::Error, %r{hold cannot be combined with ensure}) }
       end
 
       context 'with hold on a purged package' do
-        let(:params) { { packages: { 'Git.Git' => { 'ensure' => 'purged', 'hold' => true } } } }
+        let(:params) { { entries: { 'Git.Git' => { 'ensure' => 'purged', 'hold' => true } } } }
 
         it { expect { catalogue }.to raise_error(Puppet::Error, %r{hold cannot be combined with ensure}) }
       end
 
       context 'with hold combined with ensure => latest' do
-        let(:params) { { packages: { 'Git.Git' => { 'ensure' => 'latest', 'hold' => true } } } }
+        let(:params) { { entries: { 'Git.Git' => { 'ensure' => 'latest', 'hold' => true } } } }
 
         it 'fails instead of silently letting the explicit upgrade override the pin' do
           expect { catalogue }.to raise_error(Puppet::Error, %r{hold => true has no effect combined with ensure => 'latest'})
@@ -109,7 +109,7 @@ describe 'winget::packages' do
       end
 
       context 'without hold' do
-        let(:params) { { packages: { 'Git.Git' => 'installed' } } }
+        let(:params) { { entries: { 'Git.Git' => 'installed' } } }
 
         it 'leaves any existing pin alone (no mark managed)' do
           is_expected.to contain_package('Git.Git').without_mark
@@ -119,7 +119,7 @@ describe 'winget::packages' do
       context 'with an uninstall entry' do
         let(:params) do
           {
-            packages: {
+            entries: {
               'Old.App' => {
                 'ensure'            => 'absent',
                 'uninstall_options' => ['--preserve-data'],
@@ -141,7 +141,7 @@ describe 'winget::packages' do
       context 'with a class-level schedule' do
         let(:params) do
           {
-            packages: { 'Git.Git' => 'latest' },
+            entries: { 'Git.Git' => 'latest' },
             schedule: 'maintenance-window',
           }
         end
@@ -162,7 +162,7 @@ describe 'winget::packages' do
       context 'with a per-package schedule override' do
         let(:params) do
           {
-            packages: { 'Git.Git' => { 'ensure' => 'latest', 'schedule' => 'fast-lane' } },
+            entries: { 'Git.Git' => { 'ensure' => 'latest', 'schedule' => 'fast-lane' } },
             schedule: 'maintenance-window',
           }
         end
@@ -187,7 +187,7 @@ describe 'winget::packages' do
       context 'with reboot_resource' do
         let(:params) do
           {
-            packages: { 'Git.Git' => 'latest' },
+            entries: { 'Git.Git' => 'latest' },
             reboot_resource: 'maintenance-reboot',
           }
         end
@@ -207,7 +207,7 @@ describe 'winget::packages' do
       end
 
       context 'when a package is already declared elsewhere' do
-        let(:params) { { packages: { 'Git.Git' => 'latest' } } }
+        let(:params) { { entries: { 'Git.Git' => 'latest' } } }
         let(:pre_condition) do
           <<~PUPPET
             package { 'Git.Git':

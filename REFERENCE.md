@@ -33,10 +33,11 @@ property (`winget pin add` / `winget pin remove`).
 * [`Winget::PackagesHash`](#Winget--PackagesHash): Hash of winget packages for `winget::packages`.
 Keys are winget package IDs. Values are either a shorthand ensure string
 (`'installed'`, `'latest'`, `'2.40.0'`, `'absent'`, ...) or a full
-`Winget::Package` hash. Designed for Hiera (`winget::packages::packages`):
+`Winget::Package` hash. Designed for Hiera (`winget::packages`, or
+`winget::packages::entries` when declaring the sub-class directly):
 
 ```yaml
-winget::packages::packages:
+winget::packages:
   Git.Git:
     ensure: present
     scope: machine
@@ -61,10 +62,11 @@ the `winget::source` defined type.
 * [`Winget::SourcesHash`](#Winget--SourcesHash): Hash of winget package sources for `winget::sources`.
 Keys are winget source names. Values are either a shorthand URL string
 (added as a default source) or a full `Winget::SourceEntry` hash.
-Designed for Hiera (`winget::sources::sources`):
+Designed for Hiera (`winget::sources`, or `winget::sources::entries`
+when declaring the sub-class directly):
 
 ```yaml
-winget::sources::sources:
+winget::sources:
   contoso: https://winget.contoso.example.com/cache
   partners:
     url: https://winget.partners.example.com/cache
@@ -122,6 +124,19 @@ Ordering with packages using the winget provider is done at the class level:
 
   Class['winget'] -> Package <| provider == winget |>
 
+#### Examples
+
+##### Manage packages from Hiera
+
+```puppet
+# hiera.yaml:
+# winget::packages:
+#   Git.Git:
+#     ensure: present
+#     scope: machine
+include winget
+```
+
 #### Parameters
 
 The following parameters are available in the `winget` class:
@@ -134,6 +149,15 @@ The following parameters are available in the `winget` class:
 * [`proxy`](#-winget--proxy)
 * [`accept_source_agreements`](#-winget--accept_source_agreements)
 * [`enable_winget`](#-winget--enable_winget)
+* [`packages`](#-winget--packages)
+* [`packages_schedule`](#-winget--packages_schedule)
+* [`packages_reboot_resource`](#-winget--packages_reboot_resource)
+* [`sources`](#-winget--sources)
+* [`sources_reset_defaults`](#-winget--sources_reset_defaults)
+* [`sources_default_sources`](#-winget--sources_default_sources)
+* [`settings`](#-winget--settings)
+* [`experimental_features`](#-winget--experimental_features)
+* [`settings_path`](#-winget--settings_path)
 
 ##### <a name="-winget--ensure"></a>`ensure`
 
@@ -215,11 +239,93 @@ while keeping the provider available. Default: true.
 
 Default value: `true`
 
+##### <a name="-winget--packages"></a>`packages`
+
+Data type: `Winget::PackagesHash`
+
+Packages to manage, keyed by winget ID (see `Winget::PackagesHash`).
+Hiera key: `winget::packages`. Declares `winget::packages`
+automatically when non-empty, so `include winget` is enough.
+
+Default value: `{}`
+
+##### <a name="-winget--packages_schedule"></a>`packages_schedule`
+
+Data type: `Optional[String[1]]`
+
+Default Puppet `schedule` forwarded to `winget::packages`.
+
+Default value: `undef`
+
+##### <a name="-winget--packages_reboot_resource"></a>`packages_reboot_resource`
+
+Data type: `Optional[String[1]]`
+
+Optional `reboot` resource title forwarded to `winget::packages`.
+
+Default value: `undef`
+
+##### <a name="-winget--sources"></a>`sources`
+
+Data type: `Winget::SourcesHash`
+
+Sources to manage, keyed by source name (see `Winget::SourcesHash`).
+Hiera key: `winget::sources`. Declares `winget::sources`
+automatically when non-empty (or when `sources_reset_defaults` is true).
+
+Default value: `{}`
+
+##### <a name="-winget--sources_reset_defaults"></a>`sources_reset_defaults`
+
+Data type: `Boolean`
+
+Whether to reset winget sources before adding `sources`.
+
+Default value: `false`
+
+##### <a name="-winget--sources_default_sources"></a>`sources_default_sources`
+
+Data type: `Array[String[1]]`
+
+Source names treated as defaults by the reset guard.
+
+Default value: `['msstore', 'winget', 'winget-font']`
+
+##### <a name="-winget--settings"></a>`settings`
+
+Data type: `Hash`
+
+Arbitrary settings.json content (see `winget::settings`).
+Hiera key: `winget::settings`. Declares `winget::settings`
+automatically when non-empty.
+
+Default value: `{}`
+
+##### <a name="-winget--experimental_features"></a>`experimental_features`
+
+Data type: `Hash`
+
+Experimental features forwarded to `winget::settings`.
+Hiera key: `winget::experimental_features`.
+
+Default value: `{}`
+
+##### <a name="-winget--settings_path"></a>`settings_path`
+
+Data type: `Optional[String]`
+
+Explicit settings.json path forwarded to `winget::settings`.
+
+Default value: `undef`
+
 ### <a name="winget--packages"></a>`winget::packages`
 
-Reads package declarations from the `packages` hash (automatic Hiera lookup
-via `winget::packages::packages`, see `Winget::PackagesHash`) and declares one
-`package` resource with the winget provider per entry. Entries accept either
+Reads package declarations from the `entries` hash (Hiera key
+`winget::packages::entries`, see `Winget::PackagesHash`) and declares one
+`package` resource with the winget provider per entry. The common case is
+driven from the main class (`winget::packages` Hiera key, which declares
+this class automatically): use `include winget`.
+Entries accept either
 a shorthand ensure string or a full `Winget::Package` hash:
 
 - `ensure`, `install_options`, `uninstall_options` and `schedule` map to
@@ -246,17 +352,28 @@ Ordering with the bootstrap class is done at the call site:
 
 #### Examples
 
-##### Manage packages from Hiera
+##### Manage packages from Hiera (preferred)
 
 ```puppet
 # hiera.yaml:
-# winget::packages::packages:
+# winget::packages:
 #   Git.Git:
 #     ensure: present
 #     scope: machine
 #   Microsoft.VisualStudioCode:
 #     ensure: '1.95.0'
 #     hold: true
+include winget
+```
+
+##### Manage packages via the sub-class directly
+
+```puppet
+# hiera.yaml:
+# winget::packages::entries:
+#   Git.Git:
+#     ensure: present
+#     scope: machine
 include winget::packages
 Class['winget'] -> Class['winget::packages']
 ```
@@ -265,7 +382,7 @@ Class['winget'] -> Class['winget::packages']
 
 ```puppet
 class { 'winget::packages':
-  packages => {
+  entries => {
     'Git.Git' => {
       ensure       => '2.44.0',
       scope        => 'machine',
@@ -280,11 +397,11 @@ class { 'winget::packages':
 
 The following parameters are available in the `winget::packages` class:
 
-* [`packages`](#-winget--packages--packages)
+* [`entries`](#-winget--packages--entries)
 * [`schedule`](#-winget--packages--schedule)
 * [`reboot_resource`](#-winget--packages--reboot_resource)
 
-##### <a name="-winget--packages--packages"></a>`packages`
+##### <a name="-winget--packages--entries"></a>`entries`
 
 Data type: `Winget::PackagesHash`
 
@@ -319,8 +436,10 @@ Default value: `undef`
 
 Writes `%LOCALAPPDATA%/Packages/Microsoft.DesktopAppInstaller_*/LocalState/settings.json`
 for the Puppet agent account (SYSTEM by default, i.e.
-`C:/Windows/System32/config/systemprofile/...`), merging `settings` with
-`experimental_features` under the `experimentalFeatures` key. Accepts any
+`C:/Windows/System32/config/systemprofile/...`), merging `config` with
+`experimental_features` under the `experimentalFeatures` key. Hiera key
+`winget::settings::config`. The common case is driven from the main class
+(`winget::settings` Hiera key, which declares this class automatically). Accepts any
 documented winget setting (`source.autoUpdateIntervalInMinutes`,
 `installBehavior.preferences.scope`, `telemetry.disable`, ...): see
 `winget settings` and https://aka.ms/winget-settings.
@@ -331,11 +450,12 @@ agent-driven installs visible to `winget list` without repeating
 `scope => 'machine'` on every package (see `winget::packages`).
 
 Nothing is managed while winget itself is absent (fresh bootstrap): order
-settings after the bootstrap class:
+settings after the bootstrap class (automatic when driven via `include
+winget` with the `winget::settings` Hiera key):
 
   Class['winget'] -> Class['winget::settings']
 
-The managed file is replaced wholesale on every run: `settings` and
+The managed file is replaced wholesale on every run: `config` and
 `experimental_features` are NOT merged with whatever settings.json
 already contains on the node, they fully define its content. Declare
 every key you care about (including ones a previous manual `winget
@@ -347,7 +467,7 @@ settings` edit may have set) or they will be dropped.
 
 ```puppet
 class { 'winget::settings':
-  settings => {
+  config => {
     'telemetry'       => { 'disable' => true },
     'installBehavior' => { 'preferences' => { 'scope' => 'machine' } },
   },
@@ -366,11 +486,11 @@ class { 'winget::settings':
 
 The following parameters are available in the `winget::settings` class:
 
-* [`settings`](#-winget--settings--settings)
+* [`config`](#-winget--settings--config)
 * [`experimental_features`](#-winget--settings--experimental_features)
 * [`settings_path`](#-winget--settings--settings_path)
 
-##### <a name="-winget--settings--settings"></a>`settings`
+##### <a name="-winget--settings--config"></a>`config`
 
 Data type: `Hash`
 
@@ -384,7 +504,7 @@ Default value: `{}`
 Data type: `Hash`
 
 Experimental features merged under the `experimentalFeatures` key,
-overriding any `experimentalFeatures` entry of `settings`.
+overriding any `experimentalFeatures` entry of `config`.
 
 Default value: `{}`
 
@@ -399,13 +519,16 @@ Default value: `undef`
 
 ### <a name="winget--sources"></a>`winget::sources`
 
-Reads source declarations from the `sources` hash (automatic Hiera lookup
-via `winget::sources::sources`, see `Winget::SourcesHash`) and declares one
-`winget::source` resource per entry. Entries accept either a shorthand URL
+Reads source declarations from the `entries` hash (Hiera key
+`winget::sources::entries`, see `Winget::SourcesHash`) and declares one
+`winget::source` resource per entry. The common case is driven from the
+main class (`winget::sources` Hiera key, which declares this class
+automatically): use `include winget`.
+Entries accept either a shorthand URL
 string or a full `Winget::SourceEntry` hash (private REST sources, trust level,
 explicit sources, auth headers).
 
-With `reset_defaults => true`, non-default sources missing from `sources`
+With `reset_defaults => true`, non-default sources missing from `entries`
 are removed first (`winget source reset --force`, idempotent guard included),
 then the declared sources are added. The defaults themselves
 (`msstore`, `winget`, `winget-font`, overridable via `default_sources`) are
@@ -418,11 +541,23 @@ sources after the bootstrap class so they converge on the next run:
 
 #### Examples
 
-##### Private REST source from Hiera
+##### Private REST source from Hiera (preferred)
 
 ```puppet
 # hiera.yaml:
-# winget::sources::sources:
+# winget::sources:
+#   contoso:
+#     url: https://winget.contoso.example.com/cache
+#     source_type: Microsoft.Rest
+#     trust_level: trusted
+include winget
+```
+
+##### Private REST source via the sub-class directly
+
+```puppet
+# hiera.yaml:
+# winget::sources::entries:
 #   contoso:
 #     url: https://winget.contoso.example.com/cache
 #     source_type: Microsoft.Rest
@@ -435,11 +570,11 @@ Class['winget'] -> Class['winget::sources']
 
 The following parameters are available in the `winget::sources` class:
 
-* [`sources`](#-winget--sources--sources)
+* [`entries`](#-winget--sources--entries)
 * [`reset_defaults`](#-winget--sources--reset_defaults)
 * [`default_sources`](#-winget--sources--default_sources)
 
-##### <a name="-winget--sources--sources"></a>`sources`
+##### <a name="-winget--sources--entries"></a>`entries`
 
 Data type: `Winget::SourcesHash`
 
@@ -452,7 +587,7 @@ Default value: `{}`
 
 Data type: `Boolean`
 
-Whether to reset winget sources to the defaults plus `sources`
+Whether to reset winget sources to the defaults plus `entries`
 (`winget source reset --force`) before adding declared sources.
 Default: false (unmanaged sources are left alone).
 
@@ -1149,10 +1284,11 @@ Struct[{
 Hash of winget packages for `winget::packages`.
 Keys are winget package IDs. Values are either a shorthand ensure string
 (`'installed'`, `'latest'`, `'2.40.0'`, `'absent'`, ...) or a full
-`Winget::Package` hash. Designed for Hiera (`winget::packages::packages`):
+`Winget::Package` hash. Designed for Hiera (`winget::packages`, or
+`winget::packages::entries` when declaring the sub-class directly):
 
 ```yaml
-winget::packages::packages:
+winget::packages:
   Git.Git:
     ensure: present
     scope: machine
@@ -1199,10 +1335,11 @@ Struct[{
 Hash of winget package sources for `winget::sources`.
 Keys are winget source names. Values are either a shorthand URL string
 (added as a default source) or a full `Winget::SourceEntry` hash.
-Designed for Hiera (`winget::sources::sources`):
+Designed for Hiera (`winget::sources`, or `winget::sources::entries`
+when declaring the sub-class directly):
 
 ```yaml
-winget::sources::sources:
+winget::sources:
   contoso: https://winget.contoso.example.com/cache
   partners:
     url: https://winget.partners.example.com/cache
