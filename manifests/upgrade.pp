@@ -88,6 +88,17 @@
 #     reboot_resource  => 'maintenance-reboot',
 #   }
 #
+# @example Upgrade only selected packages, if installed
+#   class { 'winget::upgrade':
+#     only => ['Google.Chrome'],
+#   }
+#   # Hiera equivalent (automatic parameter lookup):
+#   # winget::upgrade::only:
+#   #   - Google.Chrome
+#   # Absent IDs declare no resource and are never installed (unlike
+#   # `package { ensure => latest }`), because IDs are matched against the
+#   # `winget_upgrades` fact which only lists installed packages.
+#
 # @example Reuse a schedule declared elsewhere
 #   schedule { 'maintenance-window':
 #     period  => weekly,

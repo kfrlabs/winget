@@ -135,6 +135,32 @@ class { 'winget::upgrade':
 }
 ```
 
+#### Upgrade Selected Packages Only If Installed
+
+To update specific packages (e.g. `Google.Chrome`) only when they are
+already installed, use `only`: IDs are matched against the
+`winget_upgrades` fact, which only lists installed packages with an
+available update. An absent package declares no resource and is never
+installed (unlike `package { ensure => latest }`, which installs it):
+
+```puppet
+class { 'winget::upgrade':
+  only => ['Google.Chrome'],
+}
+```
+
+The same via Hiera (automatic parameter lookup):
+
+```yaml
+winget::upgrade::only:
+  - Google.Chrome
+```
+
+```puppet
+include winget::upgrade
+Class['winget'] -> Class['winget::upgrade']
+```
+
 Note: the `winget_upgrades` fact runs `winget upgrade` once per agent run
 even when the packages are skipped by the schedule; the schedule only skips
 the `package` resources outside the window. When upgrades are confined to a
