@@ -1,12 +1,14 @@
 # frozen_string_literal: true
 
 # winget_upgrades fact
-# Returns the list of winget package IDs with an available upgrade (e.g.
-# `['Git.Git', 'Notepad++.Notepad++']`), or an empty array when winget is
-# absent or the query fails. Never raises.
+# Returns structured upgrade rows for PuppetDB inventory and reporting: an
+# array of hashes with the package ID, the installed version and the
+# available version, e.g.
+# `[{'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0'}]`,
+# or an empty array when winget is absent or the query fails. Never raises.
 #
-# Used by `Class['winget::upgrade']` to declare one `package` resource with
-# `ensure => latest` per ID.
+# Used by `Class['winget::upgrade']` (IDs are read from the `id` key) and for
+# inventory/reporting.
 #
 # Cost note: the fact runs `winget upgrade` once per agent run (source
 # round-trips, a few seconds) even when the packages are skipped by a Puppet

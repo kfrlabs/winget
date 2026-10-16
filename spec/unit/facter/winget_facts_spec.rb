@@ -179,12 +179,7 @@ RSpec.describe PuppetX::Winget::Facts do
       content = File.read(File.join(lib_root, 'facter', 'winget_upgrades.rb'))
       expect(content).to include("Facter.add('winget_upgrades')")
       expect(content).to include('PuppetX::Winget::Facts.winget_upgrades')
-    end
-
-    it 'defines a winget_upgrades_detail fact confined to windows that delegates to the helper' do
-      content = File.read(File.join(lib_root, 'facter', 'winget_upgrades_detail.rb'))
-      expect(content).to include("Facter.add('winget_upgrades_detail')")
-      expect(content).to include('PuppetX::Winget::Facts.upgrade_details')
+      expect(content).to include('confine kernel: :windows')
     end
 
     it 'defines a winget_pins fact confined to windows that delegates to the helper' do
@@ -252,8 +247,11 @@ RSpec.describe PuppetX::Winget::Facts do
         )
       end
 
-      it 'returns the upgradable package IDs' do
-        expect(described_class.winget_upgrades).to eq(['Git.Git', 'Notepad++.Notepad++'])
+      it 'returns structured rows' do
+        expect(described_class.winget_upgrades).to eq([
+          { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+          { 'id' => 'Notepad++.Notepad++', 'current_version' => '8.5.4', 'available_version' => '8.6.0' },
+        ])
       end
 
       it 'queries winget non-interactively' do
@@ -263,7 +261,10 @@ RSpec.describe PuppetX::Winget::Facts do
         ).and_return(
           Puppet::Util::Execution::ProcessOutput.new(upgrade_output, 0),
         )
-        expect(described_class.winget_upgrades).to eq(['Git.Git', 'Notepad++.Notepad++'])
+        expect(described_class.winget_upgrades).to eq([
+          { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+          { 'id' => 'Notepad++.Notepad++', 'current_version' => '8.5.4', 'available_version' => '8.6.0' },
+        ])
       end
     end
 
@@ -289,7 +290,10 @@ RSpec.describe PuppetX::Winget::Facts do
 
       it 'uses the given path without calling the resolver' do
         expect(PuppetX::Winget::PathResolver).not_to receive(:winget_path)
-        expect(described_class.winget_upgrades(winget_exe)).to eq(['Git.Git', 'Notepad++.Notepad++'])
+        expect(described_class.winget_upgrades(winget_exe)).to eq([
+          { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+          { 'id' => 'Notepad++.Notepad++', 'current_version' => '8.5.4', 'available_version' => '8.6.0' },
+        ])
       end
     end
 
@@ -337,27 +341,32 @@ RSpec.describe PuppetX::Winget::Facts do
       expect(described_class.parse_winget_upgrade("No applicable update found.\n")).to eq([])
     end
 
-    it 'parses a French-localized table' do
+    it 'parses current and available versions' do
+      output = <<~OUTPUT
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+        Notepad++         Notepad++.Notepad++     8.5.4     8.6.0       winget
+        2 upgrades available.
+      OUTPUT
+      expect(described_class.parse_winget_upgrade(output)).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+        { 'id' => 'Notepad++.Notepad++', 'current_version' => '8.5.4', 'available_version' => '8.6.0' },
+      ])
+    end
+
+    it 'parses a French-localized table (Disponible)' do
       output = <<~OUTPUT
         Nom               Id                      Version   Disponible  Source
         --------------------------------------------------------------------
         Git               Git.Git                 2.40.0    2.41.0      winget
       OUTPUT
-      expect(described_class.parse_winget_upgrade(output)).to eq(['Git.Git'])
+      expect(described_class.parse_winget_upgrade(output)).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+      ])
     end
 
-    it 'deduplicates IDs and skips footer lines' do
-      output = <<~OUTPUT
-        Name              Id                      Version   Available   Source
-        --------------------------------------------------------------------
-        Git               Git.Git                 2.40.0    2.41.0      winget
-        Git               Git.Git                 2.40.0    2.41.0      winget
-        2 upgrades available.
-      OUTPUT
-      expect(described_class.parse_winget_upgrade(output)).to eq(['Git.Git'])
-    end
-
-    it 'parses output with a second explicit-targeting table' do
+    it 'deduplicates rows across the explicit-targeting table' do
       # winget prints a second table with its own header when some upgrades
       # require explicit targeting (unknown versions). Both tables are
       # parsed, and neither header's `Id` cell leaks in as a package ID.
@@ -368,10 +377,24 @@ RSpec.describe PuppetX::Winget::Facts do
         The following packages have an upgrade available, but require explicit targeting:
         Name              Id                      Version   Available   Source
         --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
         Foo               Foo.Foo                 1.0       2.0         winget
-        2 upgrades available.
       OUTPUT
-      expect(described_class.parse_winget_upgrade(output)).to eq(['Git.Git', 'Foo.Foo'])
+      expect(described_class.parse_winget_upgrade(output)).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+        { 'id' => 'Foo.Foo', 'current_version' => '1.0', 'available_version' => '2.0' },
+      ])
+    end
+
+    it 'keeps rows with nil versions when the table has no Available column' do
+      output = <<~OUTPUT
+        Name              Id                      Version   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    winget
+      OUTPUT
+      expect(described_class.parse_winget_upgrade(output)).to eq([
+        { 'id' => 'Git.Git', 'current_version' => nil, 'available_version' => nil },
+      ])
     end
 
     it 'parses real-world output with collapsed single-space gaps' do
@@ -389,96 +412,18 @@ RSpec.describe PuppetX::Winget::Facts do
         Node.js                                            OpenJS.NodeJS.22                  22.16.0       22.23.2       winget
         6 upgrades available.
       OUTPUT
-      expected = [
-        'MariaDB.Server',
-        'Microsoft.DotNet.HostingBundle.6',
-        'Microsoft.DotNet.AspNetCore.6',
-        'Microsoft.EdgeWebView2Runtime',
-        'Microsoft.DotNet.DesktopRuntime.6',
-        'OpenJS.NodeJS.22',
-      ]
-      expect(described_class.parse_winget_upgrade(output)).to eq(expected)
-    end
-  end
-
-  describe '.parse_upgrade_details' do
-    it 'returns an empty array for nil or empty output' do
-      expect(described_class.parse_upgrade_details(nil)).to eq([])
-      expect(described_class.parse_upgrade_details('')).to eq([])
-    end
-
-    it 'returns an empty array when no upgrades are available' do
-      expect(described_class.parse_upgrade_details("No applicable update found.\n")).to eq([])
-    end
-
-    it 'parses current and available versions' do
-      output = <<~OUTPUT
-        Name              Id                      Version   Available   Source
-        --------------------------------------------------------------------
-        Git               Git.Git                 2.40.0    2.41.0      winget
-        Notepad++         Notepad++.Notepad++     8.5.4     8.6.0       winget
-        2 upgrades available.
-      OUTPUT
-      expect(described_class.parse_upgrade_details(output)).to eq([
-        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
-        { 'id' => 'Notepad++.Notepad++', 'current_version' => '8.5.4', 'available_version' => '8.6.0' },
-      ])
-    end
-
-    it 'parses a French-localized table (Disponible)' do
-      output = <<~OUTPUT
-        Nom               Id                      Version   Disponible  Source
-        --------------------------------------------------------------------
-        Git               Git.Git                 2.40.0    2.41.0      winget
-      OUTPUT
-      expect(described_class.parse_upgrade_details(output)).to eq([
-        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
-      ])
-    end
-
-    it 'deduplicates rows across the explicit-targeting table' do
-      output = <<~OUTPUT
-        Name              Id                      Version   Available   Source
-        --------------------------------------------------------------------
-        Git               Git.Git                 2.40.0    2.41.0      winget
-        The following packages have an upgrade available, but require explicit targeting:
-        Name              Id                      Version   Available   Source
-        --------------------------------------------------------------------
-        Git               Git.Git                 2.40.0    2.41.0      winget
-        Foo               Foo.Foo                 1.0       2.0         winget
-      OUTPUT
-      expect(described_class.parse_upgrade_details(output)).to eq([
-        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
-        { 'id' => 'Foo.Foo', 'current_version' => '1.0', 'available_version' => '2.0' },
-      ])
-    end
-
-    it 'keeps rows with nil versions when the table has no Available column' do
-      output = <<~OUTPUT
-        Name              Id                      Version   Source
-        --------------------------------------------------------------------
-        Git               Git.Git                 2.40.0    winget
-      OUTPUT
-      expect(described_class.parse_upgrade_details(output)).to eq([
-        { 'id' => 'Git.Git', 'current_version' => nil, 'available_version' => nil },
-      ])
-    end
-
-    it 'parses real-world output with collapsed single-space gaps' do
-      output = <<~OUTPUT
-        Name                                               Id                                Version       Available     Source
-        -----------------------------------------------------------------------------------------------------------------------
-        Microsoft .NET 6.0.35 - Windows Server Hosting     Microsoft.DotNet.HostingBundle.6  6.0.35        6.0.36        winget
-        Microsoft Edge WebView2 Runtime                    Microsoft.EdgeWebView2Runtime     154.0.4258.62 155.0.4283.45 winget
-      OUTPUT
-      expect(described_class.parse_upgrade_details(output)).to eq([
+      expect(described_class.parse_winget_upgrade(output)).to eq([
+        { 'id' => 'MariaDB.Server', 'current_version' => '10.5.9.0', 'available_version' => '13.0.2.0' },
         { 'id' => 'Microsoft.DotNet.HostingBundle.6', 'current_version' => '6.0.35', 'available_version' => '6.0.36' },
+        { 'id' => 'Microsoft.DotNet.AspNetCore.6', 'current_version' => '6.0.35', 'available_version' => '6.0.36' },
         { 'id' => 'Microsoft.EdgeWebView2Runtime', 'current_version' => '154.0.4258.62', 'available_version' => '155.0.4283.45' },
+        { 'id' => 'Microsoft.DotNet.DesktopRuntime.6', 'current_version' => '6.0.35', 'available_version' => '6.0.36' },
+        { 'id' => 'OpenJS.NodeJS.22', 'current_version' => '22.16.0', 'available_version' => '22.23.2' },
       ])
     end
   end
 
-  describe '.upgrade_details' do
+  describe '.winget_upgrades with execution contexts' do
     let(:winget_exe) do
       'C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.8.2391_x64__8wekyb3d8bbwe/winget.exe'
     end
@@ -500,7 +445,7 @@ RSpec.describe PuppetX::Winget::Facts do
       end
 
       it 'returns structured rows' do
-        expect(described_class.upgrade_details).to eq([
+        expect(described_class.winget_upgrades).to eq([
           { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
         ])
       end
@@ -513,7 +458,7 @@ RSpec.describe PuppetX::Winget::Facts do
 
       it 'returns [] without shelling out' do
         expect(Puppet::Util::Execution).not_to receive(:execute)
-        expect(described_class.upgrade_details(winget_exe)).to eq([])
+        expect(described_class.winget_upgrades(winget_exe)).to eq([])
       end
     end
 
@@ -525,7 +470,7 @@ RSpec.describe PuppetX::Winget::Facts do
       end
 
       it 'returns an empty array and does not raise' do
-        expect(described_class.upgrade_details).to eq([])
+        expect(described_class.winget_upgrades).to eq([])
       end
     end
   end
@@ -615,7 +560,7 @@ RSpec.describe PuppetX::Winget::Facts do
       allow(File).to receive(:exist?).with(winget_exe).and_return(true)
     end
 
-    it 'shares one winget upgrade call between both upgrade facts' do
+    it 'memoizes the winget upgrade call within a run' do
       output = <<~OUTPUT
         Name              Id                      Version   Available   Source
         --------------------------------------------------------------------
@@ -624,8 +569,10 @@ RSpec.describe PuppetX::Winget::Facts do
       expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
         Puppet::Util::Execution::ProcessOutput.new(output, 0),
       )
-      expect(described_class.winget_upgrades).to eq(['Git.Git'])
-      expect(described_class.upgrade_details).to eq([
+      expect(described_class.winget_upgrades).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+      ])
+      expect(described_class.winget_upgrades).to eq([
         { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
       ])
     end
@@ -641,7 +588,9 @@ RSpec.describe PuppetX::Winget::Facts do
       allow(Puppet::Util::Execution).to receive(:execute).and_return(first, second)
       expect(described_class.winget_upgrades).to eq([])
       described_class.reset!
-      expect(described_class.winget_upgrades).to eq(['Git.Git'])
+      expect(described_class.winget_upgrades).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+      ])
     end
   end
 end

@@ -22,7 +22,7 @@ Puppet module for managing Windows packages via winget (Windows Package Manager)
 
 ## Description
 
-This module provides a `winget` provider for Puppet's built-in `package` type, allowing you to manage Windows packages using the Windows Package Manager (winget). It also includes a `winget` class to bootstrap winget on systems where it is not pre-installed, a `winget::packages` class to declare packages from Hiera, a `winget::upgrade` class for bulk upgrades, `winget::sources` / `winget::source` for private package sources, `winget::pin` plus a provider `holdable` feature to hold packages back, a `winget::settings` class for the winget client configuration, Bolt tasks for on-demand upgrades, and custom facts `winget_path`, `winget_version`, `winget_upgrades`, `winget_upgrades_detail` and `winget_pins` for inventory and conditional logic.
+This module provides a `winget` provider for Puppet's built-in `package` type, allowing you to manage Windows packages using the Windows Package Manager (winget). It also includes a `winget` class to bootstrap winget on systems where it is not pre-installed, a `winget::packages` class to declare packages from Hiera, a `winget::upgrade` class for bulk upgrades, `winget::sources` / `winget::source` for private package sources, `winget::pin` plus a provider `holdable` feature to hold packages back, a `winget::settings` class for the winget client configuration, Bolt tasks for on-demand upgrades, and custom facts `winget_path`, `winget_version`, `winget_upgrades` and `winget_pins` for inventory and conditional logic.
 
 ## Requirements
 
@@ -103,8 +103,8 @@ package { 'Microsoft.VisualStudioCode':
 
 #### Bulk Upgrade (all packages with available updates)
 
-The `winget::upgrade` class reads the IDs from the `winget_upgrades` fact and
-declares one `package` with `ensure => latest` per ID, so upgrades are regular
+The `winget::upgrade` class reads the structured rows from the `winget_upgrades` fact and
+declares one `package` with `ensure => latest` per `id`, so upgrades are regular
 Puppet resources (reporting, noop, `--tags`) instead of a scheduled task script.
 
 ```puppet
@@ -564,22 +564,14 @@ if $facts['winget_version'] and versioncmp($facts['winget_version'], '1.5.0') >=
 
 #### winget_upgrades
 
-Returns the list of winget package IDs with an available upgrade (e.g.
-`['Git.Git']`), or `[]` when winget is absent or the query fails. Used by
-`Class['winget::upgrade']` to declare one `package` per ID.
-
-#### winget_upgrades_detail
-
 Returns structured upgrade rows for PuppetDB inventory and reporting, e.g.
 `[{'id' => 'Git.Git', 'current_version' => '2.40.0',
 'available_version' => '2.41.0'}]`, or `[]` when winget is absent or the
-query fails. Shares a single `winget upgrade` invocation per agent run with
-`winget_upgrades` (same `WINGET_UPGRADES_ENABLED=false` opt-out and
-facter.conf TTL caching).
+query fails. Used by `Class['winget::upgrade']` (one `package` per `id`).
 
 ```puppet
 # Usage in Puppet code
-$updates = $facts['winget_upgrades_detail'].map |$row| {
+$updates = $facts['winget_upgrades'].map |$row| {
   "${row['id']} ${row['current_version']} -> ${row['available_version']}"
 }
 ```
@@ -618,7 +610,7 @@ and [REFERENCE.md](REFERENCE.md#winget--packages).
 
 #### `winget::upgrade`
 
-Declares one `package` with `ensure => latest` per ID from the
+Declares one `package` with `ensure => latest` per `id` from the
 `winget_upgrades` fact. See [Bulk Upgrade](#bulk-upgrade-all-packages-with-available-updates)
 and [REFERENCE.md](REFERENCE.md#winget--upgrade).
 
@@ -719,16 +711,11 @@ Description: Version of winget (e.g., `1.8.2391`), or nil if not found.
 
 #### `winget_upgrades`
 
-Type: Array of String
-Description: Winget package IDs with an available upgrade (e.g.,
-`['Git.Git']`), or `[]` when winget is absent or the query fails. Read by
-`Class['winget::upgrade']`.
-
-#### `winget_upgrades_detail`
-
 Type: Array of Hash (`id`, `current_version`, `available_version`)
-Description: Structured upgrade rows for PuppetDB inventory and reporting,
-sharing one `winget upgrade` invocation per run with `winget_upgrades`.
+Description: Structured upgrade rows for PuppetDB inventory and reporting
+(e.g. `[{'id' => 'Git.Git', 'current_version' => '2.40.0',
+'available_version' => '2.41.0'}]`), or `[]` when winget is absent or the
+query fails. Read by `Class['winget::upgrade']` (one `package` per `id`).
 
 #### `winget_pins`
 

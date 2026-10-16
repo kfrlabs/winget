@@ -2,8 +2,9 @@
 
 # @summary Upgrades every winget package with an available update.
 #
-# Reads package IDs from the `winget_upgrades` fact and declares one `package`
-# resource with `ensure => latest` (winget provider) per ID. Upgrades are
+# Reads structured upgrade rows from the `winget_upgrades` fact (one hash
+# with `id`, `current_version` and `available_version` per package) and
+# declares one `package` resource with `ensure => latest` (winget provider) per ID. Upgrades are
 # therefore regular Puppet resources (reporting, noop, `--tags`) instead of
 # an out-of-band scheduled task script.
 #
@@ -140,10 +141,14 @@ class winget::upgrade (
     $_schedule = $schedule
   }
 
-  # Winget IDs are case-insensitive: compare lowercased.
-  $upgradable = $facts['winget_upgrades'] ? {
+  # Winget IDs are case-insensitive: compare lowercased. The fact returns
+  # structured rows; accept plain String IDs too (older agents).
+  $raw_upgrades = $facts['winget_upgrades'] ? {
     undef   => [],
     default => $facts['winget_upgrades'],
+  }
+  $upgradable = $raw_upgrades.map |$row| {
+    $row =~ String ? { true => $row, default => $row['id'] }
   }
   $pinned = $facts['winget_pins'] ? {
     undef   => [],

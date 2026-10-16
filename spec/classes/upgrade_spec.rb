@@ -11,7 +11,10 @@ describe 'winget::upgrade' do
   ).each do |os, os_facts|
     context "on #{os}" do
       let(:facts) do
-        os_facts.merge('winget_upgrades' => ['Git.Git', 'Notepad++.Notepad++'])
+        os_facts.merge('winget_upgrades' => [
+                         { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+                         { 'id' => 'Notepad++.Notepad++', 'current_version' => '8.5.4', 'available_version' => '8.6.0' },
+                       ])
       end
 
       it { is_expected.to compile.with_all_deps }
@@ -126,7 +129,10 @@ describe 'winget::upgrade' do
       context 'with pinned packages' do
         let(:facts) do
           os_facts.merge(
-            'winget_upgrades' => ['Git.Git', 'Google.Chrome'],
+            'winget_upgrades' => [
+              { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+              { 'id' => 'Google.Chrome', 'current_version' => '120.0', 'available_version' => '121.0' },
+            ],
             'winget_pins' => ['google.chrome'],
           )
         end
@@ -139,7 +145,10 @@ describe 'winget::upgrade' do
       context 'with respect_pins => false' do
         let(:facts) do
           os_facts.merge(
-            'winget_upgrades' => ['Git.Git', 'Google.Chrome'],
+            'winget_upgrades' => [
+              { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+              { 'id' => 'Google.Chrome', 'current_version' => '120.0', 'available_version' => '121.0' },
+            ],
             'winget_pins' => ['google.chrome'],
           )
         end
@@ -150,6 +159,17 @@ describe 'winget::upgrade' do
       end
 
       context 'with an undef pins fact (older agent)' do
+        let(:facts) do
+          os_facts.merge('winget_upgrades' => [
+                           { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+                         ])
+        end
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_package('Git.Git').with_ensure('latest') }
+      end
+
+      context 'with legacy String IDs (pre-structured fact)' do
         let(:facts) do
           os_facts.merge('winget_upgrades' => ['Git.Git'])
         end
