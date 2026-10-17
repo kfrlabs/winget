@@ -215,7 +215,10 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     packages = {}
     return packages if output.nil? || output.empty?
 
-    lines = output.lines.map(&:chomp).reject(&:empty?)
+    # Drop spinner frames (`\r` redraws): they precede the header on the
+    # same line and would shift every column offset.
+    require 'puppet_x/winget/facts'
+    lines = PuppetX::Winget::Facts.output_lines(output)
 
     # Find the header line (contains "Id" and "Version" - Name might be localized)
     header_idx = lines.find_index { |line| line.match?(%r{Id.*Version}i) }
@@ -425,38 +428,49 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     end
   end
 
-  # Install a package
-  # @param version [String] Version to install, or :latest
+  # Install a package.
+  # With a pinned version (`ensure => '2.40.0'`) and a different version
+  # already installed, `winget install --version` would answer "another
+  # version is already installed" (0x8A15010D), which is an idempotent
+  # success for a plain install: the pin would never converge. The version
+  # change is therefore done explicitly (see `change_version`).
   def install
-    version = resource[:ensure]
+    wanted = pinned_version
+    current = wanted && installed_entry && installed_entry[:version]
+    return change_version(wanted, current) if current && version_differs?(wanted, current)
+
+    perform_install(wanted)
+  end
+
+  # Run `winget install` and refresh the cached state.
+  # @param version [String, nil] Pinned version to install, nil for the default
+  def perform_install(version)
     args = ['install', '--id', resource[:name]]
-
-    # Handle version pinning
-    if version.is_a?(String) && version != 'latest' && version != 'present' && version != 'installed'
-      args << '--version' << version
-    end
-
-    # Source selection via install_options
-    source = install_options_source
-    args << '--source' << source if source
-
-    # Additional install_options (filter out hash options we already handled)
-    extra_args = resource[:install_options]
-    if extra_args.is_a?(Array)
-      extra_args.each_with_index do |opt, i|
-        next if opt.is_a?(Hash) && (opt.key?(:source) || opt.key?('source'))
-        next if opt.is_a?(String) && opt.match?(%r{^--source([= ].*)?$})
-        next if i.positive? && extra_args[i - 1] == '--source'
-        args << opt
-      end
-    end
+    args << '--version' << version if version
+    args.concat(install_option_args)
 
     output = winget_exec(*args)
     handle_exit_code(output, 'install')
-    self.class.clear_list_cache!
-    self.class.clear_pins_cache!
-    clear_installed_entry!
-    hold if resource[:mark] == :hold
+    refresh_after_change
+  end
+
+  # Move an installed package to another pinned version. A newer version is
+  # a regular `winget upgrade --version`; winget cannot downgrade in place,
+  # so an older version is installed after removing the current one.
+  # @param wanted [String] Pinned version from `ensure`
+  # @param current [String] Installed version
+  def change_version(wanted, current)
+    if version_newer?(wanted, current)
+      args = ['upgrade', '--id', resource[:name], '--version', wanted]
+      args.concat(install_option_args)
+      output = winget_exec(*args)
+      handle_exit_code(output, 'upgrade')
+      refresh_after_change
+    else
+      Puppet.notice("winget: downgrading #{resource[:name]} from #{current} to #{wanted} (uninstall, then install)")
+      uninstall
+      perform_install(wanted)
+    end
   end
 
   # Uninstall a package
@@ -481,21 +495,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   # instead of failing.
   def update
     args = ['upgrade', '--id', resource[:name]]
-
-    # Source selection via install_options
-    source = install_options_source
-    args << '--source' << source if source
-
-    # Additional install_options (filter out hash options we already handled)
-    extra_args = resource[:install_options]
-    if extra_args.is_a?(Array)
-      extra_args.each_with_index do |opt, i|
-        next if opt.is_a?(Hash) && (opt.key?(:source) || opt.key?('source'))
-        next if opt.is_a?(String) && opt.match?(%r{^--source([= ].*)?$})
-        next if i.positive? && extra_args[i - 1] == '--source'
-        args << opt
-      end
-    end
+    args.concat(install_option_args)
 
     output = winget_exec(*args)
     if output.exitstatus == PuppetX::Winget::Provider::EXIT_NO_APPLICATIONS_FOUND
@@ -526,11 +526,9 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     output = winget_exec(*args)
     return nil unless output.exitstatus == PuppetX::Winget::Provider::EXIT_SUCCESS
 
-    # Parse version from winget show output
-    match = output.match(%r{Version:\s+([\d.]+)}i)
-    return nil unless match
+    candidate = parse_show_version(output)
+    return nil unless candidate
 
-    candidate = match[1]
     current = installed_entry && installed_entry[:version]
     return current if current && !version_newer?(candidate, current)
 
@@ -541,6 +539,67 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   end
 
   private
+
+  # Pinned version requested through `ensure => 'x.y.z'`.
+  # @return [String, nil] The version, or nil for installed/present/latest
+  def pinned_version
+    version = resource[:ensure]
+    version.is_a?(String) ? version : nil
+  end
+
+  # Source selection followed by the extra `install_options`, shared by
+  # install, upgrade and version changes. Hash/`--source` entries are
+  # skipped: the source is emitted once, first.
+  # @return [Array] Arguments to append after `--id <name>`
+  def install_option_args
+    args = []
+    source = install_options_source
+    args << '--source' << source if source
+
+    extra_args = resource[:install_options]
+    if extra_args.is_a?(Array)
+      extra_args.each_with_index do |opt, i|
+        next if opt.is_a?(Hash) && (opt.key?(:source) || opt.key?('source'))
+        next if opt.is_a?(String) && opt.match?(%r{^--source([= ].*)?$})
+        next if i.positive? && extra_args[i - 1] == '--source'
+        args << opt
+      end
+    end
+    args
+  end
+
+  # Drop every cached view of the package state after a successful change
+  # so the next lookup observes it, then re-apply the hold if requested.
+  def refresh_after_change
+    self.class.clear_list_cache!
+    self.class.clear_pins_cache!
+    clear_installed_entry!
+    hold if resource[:mark] == :hold
+  end
+
+  # Whether two versions differ, with the numeric semantics of
+  # `version_newer?` ('26.04' equals '26.04.00.0'); plain string inequality
+  # for versions Gem cannot parse.
+  # @return [Boolean]
+  def version_differs?(wanted, current)
+    Gem::Version.new(wanted) != Gem::Version.new(current)
+  rescue ArgumentError
+    wanted != current
+  end
+
+  # Extract the version from `winget show` output. The label is localized
+  # (`Version:`, `Version :`, `Versión:`, ...), so match any single word
+  # containing "ersi" followed by a colon at the start of a line.
+  # @param output [String] Raw `winget show` output
+  # @return [String, nil] The advertised version, nil when not found
+  def parse_show_version(output)
+    require 'puppet_x/winget/facts'
+    PuppetX::Winget::Facts.output_lines(output).each do |line|
+      match = line.match(%r{\A\s*[[:alpha:]]*ersi[[:alpha:]]*[[:space:]]*:[[:space:]]*(\S+)}i)
+      return match[1] if match
+    end
+    nil
+  end
 
   # Compare winget versions with numeric semantics: trailing zero segments
   # are insignificant, so '26.04' and '26.04.00.0' compare equal. Falls back

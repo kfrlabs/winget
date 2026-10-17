@@ -397,6 +397,15 @@ RSpec.describe PuppetX::Winget::Facts do
       ])
     end
 
+    it 'ignores progress spinner frames redrawn with carriage returns' do
+      output = "\r   -\r   \\\r   |\rName   Id       Version  Available  Source\r\n" \
+               "-------------------------------------------------\r\n" \
+               "Git    Git.Git  2.40.0   2.41.0     winget\r\n"
+      expect(described_class.parse_winget_upgrade(output)).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+      ])
+    end
+
     it 'parses real-world output with collapsed single-space gaps' do
       # winget shrinks inter-column gaps to one space for long names
       # (truncated with `…`): a whitespace split reads the installed version
@@ -420,6 +429,20 @@ RSpec.describe PuppetX::Winget::Facts do
         { 'id' => 'Microsoft.DotNet.DesktopRuntime.6', 'current_version' => '6.0.35', 'available_version' => '6.0.36' },
         { 'id' => 'OpenJS.NodeJS.22', 'current_version' => '22.16.0', 'available_version' => '22.23.2' },
       ])
+    end
+  end
+
+  describe '.output_lines' do
+    it 'returns an empty array for nil' do
+      expect(described_class.output_lines(nil)).to eq([])
+    end
+
+    it 'drops blank lines and keeps the text after the last carriage return' do
+      expect(described_class.output_lines("\r-\r|\rHeader\r\n\r\n  \r\nRow\n")).to eq(%w[Header Row])
+    end
+
+    it 'leaves lines without carriage returns untouched' do
+      expect(described_class.output_lines("a b  c\nd\n")).to eq(['a b  c', 'd'])
     end
   end
 
@@ -495,6 +518,13 @@ RSpec.describe PuppetX::Winget::Facts do
 
     it 'returns an empty array when no table is present' do
       expect(described_class.parse_pin_list("No pins exist.\n")).to eq([])
+    end
+
+    it 'ignores progress spinner frames redrawn with carriage returns' do
+      output = "\r   -\r   |\rName   Id       Version  Pin\r\n" \
+               "-----------------------------------\r\n" \
+               "Git    Git.Git  2.40.0   Pinning\r\n"
+      expect(described_class.parse_pin_list(output)).to eq(['Git.Git'])
     end
 
     it 'parses pinned IDs' do
