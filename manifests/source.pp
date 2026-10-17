@@ -79,9 +79,13 @@ define winget::source (
       # the child process via an environment variable instead. `$env:...`
       # is written in a single-quoted Puppet string (no interpolation) so
       # it reaches PowerShell untouched and is resolved there, at runtime.
+      # The environment is wrapped back into `Sensitive`: a plain array
+      # holding the unwrapped value would be stored in clear text in the
+      # catalog (and in PuppetDB), whereas a Sensitive resource parameter is
+      # redacted from reports, logs and stored catalogs.
       if $header {
         $header_flag = ' --header $env:WINGET_SOURCE_HEADER'
-        $header_environment = ["WINGET_SOURCE_HEADER=${header.unwrap}"]
+        $header_environment = Sensitive(["WINGET_SOURCE_HEADER=${header.unwrap}"])
       } else {
         $header_flag = ''
         $header_environment = []

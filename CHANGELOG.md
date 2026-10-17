@@ -100,6 +100,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Acceptance test no longer asserts `Git.Git` is installed by the bare
   `winget` class: it checks `winget --version` after bootstrap, then installs
   `Git.Git` through the provider in a dedicated step
+- Task `winget::upgrade_now`: exit codes are handled as unsigned values. In
+  PowerShell `[uint32]0x8A15002B` and `[uint32]$LASTEXITCODE` throw (hex
+  literals above 0x7FFFFFFF are negative Int32), which left the constants
+  `$null` and misclassified "already current" and reboot-requested results
+  as failures
+- `winget::source`: the REST `header` is kept `Sensitive` all the way into
+  the `exec` environment instead of being unwrapped into a plain array, so it
+  is redacted from the catalog stored by PuppetDB and from reports
 
 ## [1.0.0] - 2026-10-13
 

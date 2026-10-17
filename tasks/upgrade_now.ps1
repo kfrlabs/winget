@@ -21,14 +21,22 @@ $ErrorActionPreference = 'Continue'
 
 # winget exit codes (subset relevant to upgrades, verified against
 # https://github.com/microsoft/winget-cli/blob/master/doc/windows/package-manager/winget/returnCodes.md).
+# PowerShell types hex literals above 0x7FFFFFFF as negative Int32 and
+# $LASTEXITCODE is a signed Int32, so `[uint32]0x8A15002B` and
+# `[uint32]$LASTEXITCODE` both throw. The constants are therefore parsed
+# from their hex text, and the exit code is reinterpreted bit for bit.
 $EXIT_SUCCESS = 0
-$EXIT_UPDATE_NOT_APPLICABLE = [uint32]0x8A15002B
-$EXIT_PACKAGE_ALREADY_INSTALLED = [uint32]0x8A150061
-$EXIT_INSTALL_ALREADY_INSTALLED = [uint32]0x8A15010D
-$EXIT_REBOOT_REQUIRED_TO_FINISH = [uint32]0x8A150109
-$EXIT_REBOOT_REQUIRED_FOR_INSTALL = [uint32]0x8A15010A
-$EXIT_REBOOT_INITIATED = [uint32]0x8A15010B
-$EXIT_NO_APPLICABLE_INSTALLER = [uint32]0x8A150010
+$EXIT_UPDATE_NOT_APPLICABLE = [Convert]::ToUInt32('8A15002B', 16)
+$EXIT_PACKAGE_ALREADY_INSTALLED = [Convert]::ToUInt32('8A150061', 16)
+$EXIT_INSTALL_ALREADY_INSTALLED = [Convert]::ToUInt32('8A15010D', 16)
+$EXIT_REBOOT_REQUIRED_TO_FINISH = [Convert]::ToUInt32('8A150109', 16)
+$EXIT_REBOOT_REQUIRED_FOR_INSTALL = [Convert]::ToUInt32('8A15010A', 16)
+$EXIT_REBOOT_INITIATED = [Convert]::ToUInt32('8A15010B', 16)
+$EXIT_NO_APPLICABLE_INSTALLER = [Convert]::ToUInt32('8A150010', 16)
+
+function ConvertTo-UInt32ExitCode([int]$Code) {
+  return [BitConverter]::ToUInt32([BitConverter]::GetBytes($Code), 0)
+}
 
 function Read-TaskParams {
   $params = @{ ids = @(); exclude = @(); include_pinned = $false }
@@ -162,7 +170,7 @@ $rebootRequired = $false
 
 foreach ($id in $targets) {
   $null = & $winget upgrade --id $id --exact --accept-package-agreements --accept-source-agreements --disable-interactivity --silent 2>&1
-  $code = [uint32]$LASTEXITCODE
+  $code = ConvertTo-UInt32ExitCode $LASTEXITCODE
   if ($code -eq $EXIT_SUCCESS) {
     $upgraded += $id
   } elseif ($code -eq $EXIT_REBOOT_REQUIRED_TO_FINISH -or $code -eq $EXIT_REBOOT_REQUIRED_FOR_INSTALL -or $code -eq $EXIT_REBOOT_INITIATED) {

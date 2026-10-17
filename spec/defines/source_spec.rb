@@ -81,9 +81,16 @@ describe 'winget::source' do
         .with_command(%r{--header \$env:WINGET_SOURCE_HEADER})
     end
 
-    it 'passes the unwrapped header through the environment parameter only' do
-      is_expected.to contain_exec('winget-source-add-sensitive-source')
-        .with_environment(['WINGET_SOURCE_HEADER=s3cr3t'])
+    it 'passes the header through the environment parameter only' do
+      exec = catalogue.resource('Exec', 'winget-source-add-sensitive-source')
+      environment = exec[:environment]
+      environment = environment.unwrap if environment.respond_to?(:unwrap)
+      expect(environment).to eq(['WINGET_SOURCE_HEADER=s3cr3t'])
+    end
+
+    it 'keeps the environment parameter Sensitive so the secret is redacted in catalogs and reports' do
+      exec = catalogue.resource('Exec', 'winget-source-add-sensitive-source')
+      expect(exec.sensitive_parameters.map(&:to_sym)).to include(:environment)
     end
   end
 
