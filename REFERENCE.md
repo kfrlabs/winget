@@ -87,7 +87,6 @@ with the `winget::sources` class.
 
 ### <a name="winget"></a>`winget`
 
-Manages the installation and configuration of the Windows Package Manager (winget).
 Ensures winget is available on the system so that the `winget` package provider can function.
 
 === Prerequisites
