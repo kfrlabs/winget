@@ -31,6 +31,19 @@ jobs:
           bundler-cache: true
       - name: PDK validate (syntax, lint, metadata, rubocop, YAML/JSON)
         run: bundle exec rake syntax lint metadata_lint rubocop
+      - name: PowerShell tasks parse cleanly
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in Get-ChildItem -Path tasks -Filter '*.ps1') {
+            $parseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$parseErrors)
+            foreach ($parseError in $parseErrors) {
+              $failed = $true
+              Write-Host "::error file=$($file.FullName),line=$($parseError.Extent.StartLineNumber)::$($parseError.Message)"
+            }
+          }
+          if ($failed) { exit 1 }
       - name: REFERENCE.md is up to date
         run: |
           bundle exec rake strings:generate:reference
