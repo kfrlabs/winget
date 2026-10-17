@@ -221,6 +221,20 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
     end
 
+    context 'with progress spinner frames redrawn with carriage returns' do
+      let(:output) do
+        "\r   -\r   \\\r   |\r   /\rName      Id        Version  Source\r\n" \
+          "----------------------------------------\r\n" \
+          "Git       Git.Git   2.40.0   winget\r\n"
+      end
+
+      it 'keeps only the visible text so column offsets stay aligned' do
+        result = provider.parse_winget_list(output)
+        expect(result.keys).to eq(['git.git'])
+        expect(result['git.git'][:version]).to eq('2.40.0')
+      end
+    end
+
     context 'with single-space gaps between columns (long names)' do
       # winget shrinks inter-column gaps to one space (and truncates names
       # with `…`); columns stay aligned on the header offsets.
@@ -274,10 +288,60 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
 
       it 'calls winget install with --version' do
+        allow(described_class).to receive(:instances_list).and_return({})
         expect(provider).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--version', '2.40.0').and_return(
           Puppet::Util::Execution::ProcessOutput.new('', 0)
         )
         provider.install
+      end
+    end
+
+    context 'with a pinned version and another version already installed' do
+      let(:installed) do
+        { 'git.git' => { name: 'Git', version: '2.40.0', source: 'winget', id: 'Git.Git' } }
+      end
+      let(:ok) { Puppet::Util::Execution::ProcessOutput.new('', 0) }
+
+      before(:each) do
+        allow(described_class).to receive(:instances_list).and_return(installed)
+      end
+
+      context 'when the pinned version is newer' do
+        let(:resource) { Puppet::Type.type(:package).new(name: 'Git.Git', ensure: '2.41.0', provider: :winget) }
+
+        it 'upgrades to the pinned version instead of a no-op install' do
+          expect(provider).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git', '--version', '2.41.0').and_return(ok)
+          expect(provider).not_to receive(:uninstall)
+          provider.install
+        end
+
+        it 'keeps the source and extra install_options' do
+          resource[:install_options] = ['--source', 'msstore', '--scope', 'machine']
+          expect(provider).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git', '--version', '2.41.0', '--source', 'msstore', '--scope', 'machine').and_return(ok)
+          provider.install
+        end
+      end
+
+      context 'when the pinned version is older' do
+        let(:resource) { Puppet::Type.type(:package).new(name: 'Git.Git', ensure: '2.39.0', provider: :winget) }
+
+        it 'uninstalls, then installs the pinned version' do
+          expect(provider).to receive(:winget_exec).with('uninstall', '--id', 'Git.Git').ordered.and_return(ok)
+          expect(provider).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--version', '2.39.0').ordered.and_return(ok)
+          allow(Puppet).to receive(:notice)
+          provider.install
+          expect(Puppet).to have_received(:notice).with(%r{downgrading Git\.Git from 2\.40\.0 to 2\.39\.0})
+        end
+      end
+
+      context 'when the pinned version equals the installed one (trailing zero segments)' do
+        let(:resource) { Puppet::Type.type(:package).new(name: 'Git.Git', ensure: '2.40', provider: :winget) }
+
+        it 'goes through the idempotent install path' do
+          expect(provider).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--version', '2.40').and_return(ok)
+          expect(provider).not_to receive(:uninstall)
+          provider.install
+        end
       end
     end
 
@@ -403,6 +467,38 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
         output = Puppet::Util::Execution::ProcessOutput.new("Version: 2.41.0\nOther info", 0)
         expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git').and_return(output)
         expect(provider.latest).to eq('2.41.0')
+      end
+    end
+
+    context 'when the label is localized (French "Version :" with a non-breaking space)' do
+      it 'still finds the advertised version' do
+        output = Puppet::Util::Execution::ProcessOutput.new("Trouvé Git [Git.Git]\nVersion\u00A0: 2.41.0\nÉditeur : Git\n", 0)
+        expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git').and_return(output)
+        expect(provider.latest).to eq('2.41.0')
+      end
+    end
+
+    context 'when the label is Spanish (Versión:)' do
+      it 'still finds the advertised version' do
+        output = Puppet::Util::Execution::ProcessOutput.new("Versión: 2.41.0\n", 0)
+        expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git').and_return(output)
+        expect(provider.latest).to eq('2.41.0')
+      end
+    end
+
+    context 'when the advertised version is not purely numeric' do
+      it 'returns it whole instead of truncating at the first letter' do
+        output = Puppet::Util::Execution::ProcessOutput.new("Version: 2.41.0-beta1\n", 0)
+        expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git').and_return(output)
+        expect(provider.latest).to eq('2.41.0-beta1')
+      end
+    end
+
+    context 'when other lines merely mention a version' do
+      it 'ignores them' do
+        output = Puppet::Util::Execution::ProcessOutput.new("Installer Version: 9.9.9\nPublisher: Git\n", 0)
+        expect(provider).to receive(:winget_exec).with('show', '--id', 'Git.Git').and_return(output)
+        expect(provider.latest).to be_nil
       end
     end
 

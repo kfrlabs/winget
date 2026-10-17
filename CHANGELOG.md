@@ -77,6 +77,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `suitable?` warning throttle: the unsuitable/missing-winget warning is
   emitted only once per process (further checks use `Puppet.debug`),
   instead of once per resource
+- Provider: a pinned `ensure => 'x.y.z'` now converges when another version
+  is installed. `winget install --version` answers 0x8A15010D ("another
+  version is installed"), which the provider treated as an idempotent
+  success, so the pin was never applied and the resource reported a change
+  on every run. A newer pin now runs `winget upgrade --version`; an older
+  one uninstalls then installs (winget cannot downgrade in place)
+- Provider `latest` reads the `winget show` version label in any language
+  (`Version :`, `Versión:`, ...) and keeps non-numeric suffixes
+  (`2.41.0-beta1`) instead of requiring an English `Version:` and `[\d.]+`
+- `winget list` / `upgrade` / `pin list` parsing ignores the progress
+  spinner frames winget redraws with carriage returns, which shifted the
+  column offsets of the header line
 - `source => 'auto'` fallback: the `github` fallback is no longer chained
   after `msstore` with `->`, so it still runs when the `msstore` install
   fails (previously it never ran: skipped on failure, no-op on success)

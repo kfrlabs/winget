@@ -135,7 +135,7 @@ module PuppetX
           seen = []
           return rows if output.nil? || output.empty?
 
-          lines = output.lines.map(&:chomp).reject(&:empty?)
+          lines = output_lines(output)
 
           header_indices = lines.each_index.select { |i| table_header?(lines[i]) }
           return rows if header_indices.empty?
@@ -222,7 +222,7 @@ module PuppetX
           ids = []
           return ids if output.nil? || output.empty?
 
-          lines = output.lines.map(&:chomp).reject(&:empty?)
+          lines = output_lines(output)
 
           header_indices = lines.each_index.select { |i| table_header?(lines[i]) }
           return ids if header_indices.empty?
@@ -246,6 +246,26 @@ module PuppetX
           end
 
           ids
+        end
+
+        # Split raw winget output into non-blank lines, discarding the
+        # progress spinner frames winget redraws with carriage returns
+        # (`\r`). Only the text after the last carriage return of a line is
+        # what ends up on screen, and it is the only text whose columns line
+        # up with the table header offsets.
+        # @param output [String, nil] Raw command output
+        # @return [Array<String>] Non-blank lines without spinner frames
+        def output_lines(output)
+          output.to_s.lines.map { |line| strip_progress(line.chomp) }.reject { |line| line.strip.empty? }
+        end
+
+        # Keep only the last visible segment of a line redrawn with `\r`.
+        # @param line [String] Line without its trailing newline
+        # @return [String] The visible text ('' when nothing is visible)
+        def strip_progress(line)
+          return line unless line.include?("\r")
+
+          line.split("\r").reverse.find { |segment| !segment.strip.empty? } || ''
         end
 
         # Whether a line is a winget table header (and not a data row that
