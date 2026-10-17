@@ -412,7 +412,7 @@ reboot { 'winget-reboot':
 }
 
 class { 'winget::packages':
-  packages        => { 'Git.Git' => 'latest' },
+  entries         => { 'Git.Git' => 'latest' },
   reboot_resource => 'winget-reboot',
 }
 ```
@@ -420,7 +420,7 @@ class { 'winget::packages':
 #### Winget Client Settings
 
 The `winget::settings` class manages `settings.json` for the agent account
-(SYSTEM by default), merging `settings` with `experimental_features`. The
+(SYSTEM by default), merging `config` with `experimental_features`. The
 file is replaced wholesale on every run — it is NOT merged with whatever
 settings.json already contains on the node — so declare every key you
 care about. The parent `LocalState` directory is created automatically if
@@ -429,7 +429,7 @@ profile):
 
 ```puppet
 class { 'winget::settings':
-  settings => {
+  config => {
     'telemetry'       => { 'disable' => true },
     'installBehavior' => { 'preferences' => { 'scope' => 'machine' } },
   },
@@ -669,7 +669,9 @@ generated with `pdk bundle exec puppet strings generate --format markdown`.
 
 #### `winget`
 
-Main class for bootstrapping winget. See [Bootstrap Class Examples](#bootstrap-class-examples)
+Main class: bootstraps winget and optionally manages packages, sources
+and settings from Hiera (`winget::packages`, `winget::sources`,
+`winget::settings`). See [Bootstrap Class Examples](#bootstrap-class-examples)
 and [REFERENCE.md](REFERENCE.md#winget).
 
 `source` accepts `'cdn'` (Microsoft CDN, preferred), `'github'`, `'auto'`
@@ -681,7 +683,7 @@ Declares one `package` with the winget provider per entry of a
 Hiera-friendly hash, with structured install parameters (`scope`,
 `architecture`, `location`, `override`, ...), optional `schedule`, optional
 `reboot_resource` wiring, and a `hold` flag mapped to `winget pin`.
-See [Declaring Packages from Hiera](#declaring-packages-from-hierawingetpackages)
+See [Declaring Packages from Hiera](#declaring-packages-from-hiera-wingetpackages)
 and [REFERENCE.md](REFERENCE.md#winget--packages).
 
 #### `winget::upgrade`
