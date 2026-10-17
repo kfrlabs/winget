@@ -123,6 +123,32 @@ RSpec.describe PuppetX::Winget::PathResolver do
       end
     end
 
+    context 'when only a per-user App Execution Alias exists' do
+      # Regression test: per-user profile aliases (LOCALAPPDATA, C:/Users/*)
+      # must be ignored. The alias file exists on disk but SYSTEM cannot
+      # execute another user's AppX alias, so resolving to it reports a
+      # winget_path that fails on every invocation.
+      before(:each) do
+        allow(Dir).to receive(:exist?).and_return(false)
+        ENV['LOCALAPPDATA'] = 'C:/Users/jdoe/AppData/Local'
+        allow(File).to receive(:exist?).and_call_original
+        allow(File).to receive(:exist?)
+          .with('C:/Users/jdoe/AppData/Local/Microsoft/WindowsApps/winget.exe')
+          .and_return(true)
+        allow(Dir).to receive(:glob)
+          .with('C:/Users/*/AppData/Local/Microsoft/WindowsApps/winget.exe')
+          .and_return(['C:/Users/jdoe/AppData/Local/Microsoft/WindowsApps/winget.exe'])
+      end
+
+      after(:each) do
+        ENV.delete('LOCALAPPDATA')
+      end
+
+      it 'ignores the user-profile alias and returns nil' do
+        expect(described_class.winget_path).to be_nil
+      end
+    end
+
     context 'version comparison' do
       it 'correctly compares versions using Gem::Version' do
         paths = [
