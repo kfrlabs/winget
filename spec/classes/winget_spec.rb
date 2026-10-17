@@ -69,6 +69,7 @@ describe 'winget' do
         let(:params) { { source: 'cdn' } }
 
         it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_winget__install__msstore('winget').with_fail_on_error(true) }
         it { is_expected.to contain_winget__install__msstore('winget') }
         it { is_expected.not_to contain_winget__install__github('winget') }
       end
@@ -87,6 +88,10 @@ describe 'winget' do
         it { is_expected.to compile.with_all_deps }
         it { is_expected.to contain_winget__install__msstore('winget') }
         it { is_expected.to contain_winget__install__github('winget_fallback') }
+
+        it 'tolerates a failed cdn attempt so the fallback can still run and the class does not fail' do
+          is_expected.to contain_winget__install__msstore('winget').with_fail_on_error(false)
+        end
 
         it 'leaves the github fallback independent so it still runs when msstore fails' do
           ms = catalogue.resource('Winget::Install::Msstore[winget]')
@@ -190,6 +195,7 @@ describe 'winget' do
 
         it { is_expected.to compile.with_all_deps }
         it { is_expected.to contain_class('winget::packages').with_entries('Git.Git' => 'installed') }
+        it { is_expected.to contain_class('winget::packages').that_requires('Class[winget]') }
         it { is_expected.to contain_package('Git.Git').with_ensure('installed').with_provider('winget') }
       end
 
@@ -210,6 +216,7 @@ describe 'winget' do
 
         it { is_expected.to compile.with_all_deps }
         it { is_expected.to contain_class('winget::sources') }
+        it { is_expected.to contain_class('winget::sources').that_requires('Class[winget]') }
         it { is_expected.to contain_winget__source('contoso') }
       end
 
@@ -218,6 +225,7 @@ describe 'winget' do
 
         it { is_expected.to compile.with_all_deps }
         it { is_expected.to contain_class('winget::settings') }
+        it { is_expected.to contain_class('winget::settings').that_requires('Class[winget]') }
       end
 
       context 'with invalid source value' do

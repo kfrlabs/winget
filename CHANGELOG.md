@@ -60,6 +60,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   schedule-window setups
 
 ### Fixed
+- Bootstrap ordering: `winget::packages`, `winget::sources` and
+  `winget::settings`, when declared from the main class (Hiera keys), now
+  `require` `Class['winget']`, so packages no longer run before winget is
+  installed; they are deliberately not contained, which would create a
+  dependency cycle with `Class['winget'] -> Package <| provider == winget |>`
+- `source => 'auto'`: a failed `cdn` attempt (exit code 1 accepted via the
+  new `fail_on_error => false` parameter of `winget::install::msstore`) no
+  longer marks `Class['winget']` as failed, which used to skip every
+  dependent resource even when the `github` fallback succeeded
+- CI `gate` job always runs and fails when a required job failed, was
+  cancelled or was skipped (a skipped required check counted as passing)
 - `suitable?` warning throttle: the unsuitable/missing-winget warning is
   emitted only once per process (further checks use `Puppet.debug`),
   instead of once per resource

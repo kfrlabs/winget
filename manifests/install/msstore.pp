@@ -44,13 +44,22 @@
 # @param retry_interval
 #   Seconds between retry attempts. Default: 10.
 #
+# @param fail_on_error
+#   Whether a failed install makes the catalog run fail. Default: true. Set
+#   to false when another method acts as a fallback (`source => 'auto'`):
+#   exit code 1 is then accepted, so the failure of this attempt does not
+#   mark the including class as failed and the fallback still gets a chance.
+#   Note that Puppet does not retry (`retry_count`) once exit code 1 is
+#   accepted.
+#
 define winget::install::msstore (
   String $ensure                    = 'present',
   Optional[String] $version         = undef,
   Boolean $accept_source_agreements = true,
   Optional[String] $proxy           = undef,
   Integer $retry_count              = 3,
-  Integer $retry_interval           = 10
+  Integer $retry_interval           = 10,
+  Boolean $fail_on_error            = true
 ) {
   if $version and $version =~ /^\d+(\.\d+)+$/ {
     $real_ensure = $version
@@ -88,12 +97,18 @@ define winget::install::msstore (
     # bundle does not embed the VCLibs / UI.Xaml framework packages, so fall
     # back to `Add-AppxProvisionedPackage -Online -SkipLicense`, which stages
     # the package for all users without a Store license.
+    $exec_returns = $fail_on_error ? {
+      true    => [0],
+      default => [0, 1],
+    }
+
     exec { "winget_install_msstore_${title}":
       command     => "${powershell} -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-WebRequest -UseBasicParsing -Uri 'https://aka.ms/getwinget' -OutFile (Join-Path \$env:TEMP 'winget.msixbundle'); try { Add-AppxPackage -Path (Join-Path \$env:TEMP 'winget.msixbundle') -ErrorAction Stop } catch { Add-AppxProvisionedPackage -Online -PackagePath (Join-Path \$env:TEMP 'winget.msixbundle') -SkipLicense }\"",
       environment => $download_env,
       timeout     => 600,
       tries       => $retry_count,
       try_sleep   => $retry_interval,
+      returns     => $exec_returns,
       unless      => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
     }
   }

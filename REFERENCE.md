@@ -1016,6 +1016,7 @@ The following parameters are available in the `winget::install::msstore` defined
 * [`proxy`](#-winget--install--msstore--proxy)
 * [`retry_count`](#-winget--install--msstore--retry_count)
 * [`retry_interval`](#-winget--install--msstore--retry_interval)
+* [`fail_on_error`](#-winget--install--msstore--fail_on_error)
 
 ##### <a name="-winget--install--msstore--ensure"></a>`ensure`
 
@@ -1067,6 +1068,19 @@ Data type: `Integer`
 Seconds between retry attempts. Default: 10.
 
 Default value: `10`
+
+##### <a name="-winget--install--msstore--fail_on_error"></a>`fail_on_error`
+
+Data type: `Boolean`
+
+Whether a failed install makes the catalog run fail. Default: true. Set
+to false when another method acts as a fallback (`source => 'auto'`):
+exit code 1 is then accepted, so the failure of this attempt does not
+mark the including class as failed and the fallback still gets a chance.
+Note that Puppet does not retry (`retry_count`) once exit code 1 is
+accepted.
+
+Default value: `true`
 
 ### <a name="winget--pin"></a>`winget::pin`
 
