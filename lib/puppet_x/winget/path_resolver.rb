@@ -6,14 +6,17 @@
 # - 32-bit Ruby on 64-bit Windows (ProgramFiles vs ProgramW6432)
 # - Both x64 and arm64 variants
 # - Selecting the highest version using Gem::Version comparison
-# - SYSTEM context fallbacks: PATH lookup and per-user App Execution Aliases
+# - SYSTEM-safe fallback: PATH lookup only (never per-user profile aliases)
 # - Memoization to avoid repeated filesystem scans
 # - Never raises at catalog load time; returns nil when winget is absent
 #
 # WindowsApps ACL caveat: The SYSTEM account (under which the Puppet agent runs)
 # may not have read access to the WindowsApps directory by default. When the
-# directory listing fails, the resolver falls back to PATH and well-known
-# App Execution Alias locations before giving up.
+# directory listing fails, the resolver falls back to PATH before giving up.
+# Per-user App Execution Aliases are deliberately NOT scanned: an alias file
+# exists on disk for interactive users (File.exist? is true) but SYSTEM cannot
+# execute another user's AppX alias (0xC0000135 / Access denied), so resolving
+# to it would report a working winget_path that fails on every invocation.
 # rubocop:disable Style/ClassAndModuleChildren
 module PuppetX
   module Winget
@@ -33,7 +36,7 @@ module PuppetX
         private
 
         def resolve_winget_path
-          from_windows_apps || from_path || from_user_alias
+          from_windows_apps || from_path
         rescue StandardError
           # Never raise at catalog load time; log and return nil
           nil
@@ -69,33 +72,14 @@ module PuppetX
           nil
         end
 
-        # Fallback 1: winget on PATH (App Execution Alias for the current
-        # user, admin installs, or custom locations).
+        # Fallback: winget on PATH (admin installs or custom locations).
+        # Per-user profile aliases (LOCALAPPDATA, C:/Users/*/...) are
+        # deliberately not scanned: see the class comment above.
         def from_path
           hit = which('winget.exe') || which('winget')
           return nil unless hit && File.exist?(hit)
 
           hit
-        rescue StandardError
-          nil
-        end
-
-        # Fallback 2: per-user App Execution Aliases. The SYSTEM account has
-        # no alias of its own, but interactive users' aliases exist on disk
-        # and are executable when the ACLs allow it.
-        def from_user_alias
-          local = ENV['LOCALAPPDATA']
-          if local
-            candidate = File.join(local, 'Microsoft', 'WindowsApps', 'winget.exe')
-            return candidate if File.exist?(candidate)
-          end
-
-          begin
-            hits = Dir.glob('C:/Users/*/AppData/Local/Microsoft/WindowsApps/winget.exe')
-          rescue StandardError
-            hits = []
-          end
-          hits.find { |path| File.exist?(path) }
         rescue StandardError
           nil
         end
