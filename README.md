@@ -174,7 +174,7 @@ facts : {
 ```
 
 Or opt out entirely with the `WINGET_UPGRADES_ENABLED=false` environment
-variable (or `facts : { blocklist : [ "winget_upgrades" ] }`): the fact then
+variable (`false`, `0`, `no`, `off`; or `facts : { blocklist : [ "winget_upgrades" ] }`): the fact then
 returns `[]` without shelling out.
 
 A package already declared elsewhere in the catalog (e.g. `package {
@@ -764,12 +764,10 @@ Provider for the `package` type using Windows Package Manager.
 excluded from `upgrade --all`, explicit upgrades still allowed);
 `mark => none` (default) maps to `winget pin remove`.
 
-**Default flags passed to all commands**:
-- `--accept-package-agreements`
-- `--accept-source-agreements`
-- `--disable-interactivity`
-- `--exact`
-- `--silent`
+**Default flags** (always after the subcommand; only flags documented for that subcommand are used):
+- `install` / `upgrade`: `--accept-package-agreements --accept-source-agreements --disable-interactivity --exact --silent`
+- `uninstall`: `--accept-source-agreements --disable-interactivity --exact --silent` (no package agreements)
+- `show` / `list` / `pin list`: see `lib/puppet/provider/package/winget.rb` (`SHOW_FLAGS`, `LIST_FLAGS`, `PIN_FLAGS`)
 
 **Source selection**: via `install_options` parameter (hash with `source` key or string array)
 
@@ -928,7 +926,7 @@ retried.
 - Run `winget list` by hand on the node to diagnose a persistent failure
 - Check `winget --info` / `winget --open-logs` for a corrupted source index
 
-### `winget::pin`, `winget::source`, `winget::configure` or `winget::settings` silently do nothing on the first run
+### `winget::pin`, `winget::source`, `winget::sources`, `winget::configure` or `winget::settings` do nothing on the first run (warn and converge next run)
 
 **Symptom**: No exec/file resource shows up in the report for one of these
 resources on a freshly bootstrapped node, with a `Puppet.warning` such as
@@ -946,6 +944,7 @@ converge as soon as possible:
 ```puppet
 Class['winget'] -> Winget::Pin <| |>
 Class['winget'] -> Winget::Source <| |>
+Class['winget'] -> Class['winget::sources']
 Class['winget'] -> Winget::Configure <| |>
 Class['winget'] -> Class['winget::settings']
 ```

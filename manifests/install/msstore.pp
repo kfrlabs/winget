@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# == Define: winget::install::msstore
+# @summary Installs winget from the Microsoft CDN distribution of App Installer.
 #
 # Installs winget from the Microsoft CDN distribution of App Installer
 # (`https://aka.ms/getwinget`, a .msixbundle). This method is used instead of

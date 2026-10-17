@@ -96,5 +96,10 @@ class winget::sources (
     }
 
     create_resources('winget::source', Hash($pairs))
+  } else {
+    # $facts['winget_path'] is nil until winget has run once (e.g. a
+    # fresh node mid-bootstrap): silently skipping would hide these
+    # sources until a later run with no trace in the report.
+    warning("winget::sources: winget_path fact is not yet set (winget not bootstrapped on this node yet); sources will be managed on a later run once the fact is present. Order sources after Class['winget'] to avoid surprises.")
   }
 }

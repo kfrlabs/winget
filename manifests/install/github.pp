@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# == Define: winget::install::github
+# @summary Installs winget from GitHub releases.
 #
 # Installs winget from GitHub releases by downloading the AppX/MSIX bundle
 # and installing it with Add-AppxPackage. This is the recommended method for
