@@ -29,7 +29,7 @@ This module provides a `winget` provider for Puppet's built-in `package` type, a
 - **Puppet**: >= 7.0.0 < 9.0.0 (Puppet 7/8, OpenVox 8 compatible)
 - **Operating System**: Windows 10 1809 (build 17763) or later, Windows Server 2019, 2022 or 2025
 - **Architecture**: x64 and arm64 supported
-- **Internet Access**: Required for downloading winget from Microsoft Store or GitHub (unless using `source_path` for offline installation)
+- **Internet Access**: Required for downloading winget from the Microsoft CDN (`aka.ms/getwinget`) or GitHub (unless using `source_path` for offline installation)
 - **Proxy Support**: Configurable via `proxy` parameter
 - **SYSTEM Account Access**: The SYSTEM account (under which Puppet agent runs) must have read access to `%ProgramFiles%\WindowsApps`. This is required for the path resolver to locate winget.exe.
 
@@ -39,7 +39,7 @@ This module provides a `winget` provider for Puppet's built-in `package` type, a
 
 - Adds a `winget` provider to Puppet's `package` type
 - Optionally installs winget via the `winget` class (bootstrap)
-- Creates custom facts `winget_path` and `winget_version`
+- Creates custom facts `winget_path`, `winget_version`, `winget_upgrades` and `winget_pins`
 - Does not modify WindowsApps ACLs (must be configured separately if needed)
 
 ### Beginning with winget
@@ -614,7 +614,7 @@ succeeds.
 
 ### Facts
 
-The module provides three custom facts for inventory and conditional logic:
+The module provides four custom facts for inventory and conditional logic:
 
 #### winget_path
 
@@ -952,12 +952,15 @@ Class['winget'] -> Class['winget::settings']
 
 ### winget bootstrap fails on Windows Server
 
-**Cause**: Microsoft Store may not be available on Server editions.
+**Cause**: The bootstrap does not use the Microsoft Store: it downloads App Installer
+from the Microsoft CDN (`aka.ms/getwinget`) or GitHub. On a server this usually fails
+because the download is blocked (proxy, firewall) or because the framework
+dependencies (VCLibs / UI.Xaml) are missing.
 
 **Solutions**:
+- Set the `proxy` parameter if the server reaches the internet through a proxy
 - Use `source => 'github'` instead
-- Use `source_path` with a local AppX/MSIX file
-- Install Microsoft Store on Server first (not recommended for production)
+- Use `source_path` with a local AppX/MSIX file, plus `dependencies` for the VCLibs / UI.Xaml packages
 
 ### Cannot uninstall App Installer (NonRemovable Store package)
 
@@ -985,7 +988,7 @@ installed build.
 
 **Solutions**:
 - Ensure `proxy` parameter includes scheme: `http://proxy:8080`
-- Verify proxy allows HTTPS to GitHub and Microsoft Store endpoints
+- Verify proxy allows HTTPS to GitHub and the Microsoft CDN (`aka.ms`)
 - Check SYSTEM account proxy settings
 
 ## Development

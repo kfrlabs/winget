@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Class `winget::upgrade`: new `respect_pins` parameter (default true,
   skips IDs from the new `winget_pins` fact) and `reboot_resource`
   parameter (optional notify wiring to a caller-declared `reboot`
-  resource from puppetlabs/reboot, so exit `0x8A150003` reboots)
+  resource from puppetlabs/reboot, so exit `0x8A150109`/`0x8A15010A`/`0x8A15010B` reboots)
 - Class `winget::packages`: same optional `reboot_resource` wiring
 - Structured facts `winget_upgrades` (ID + current/available
   versions for PuppetDB inventory, read by `winget::upgrade`) and
@@ -58,6 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (returns `[]` without shelling out); facter.conf TTL caching documented
   (`facts: { ttls: [{ "winget_upgrades": "7 days" }] }`) for
   schedule-window setups
+- Bootstrap `source => 'cdn'`: preferred name for the Microsoft CDN download
+  of App Installer (`https://aka.ms/getwinget`); `source => 'msstore'` is kept
+  as a deprecated alias with the same behavior and logs a deprecation warning
 
 ### Fixed
 - `suitable?` warning throttle: the unsuitable/missing-winget warning is
