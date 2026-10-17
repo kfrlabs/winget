@@ -6,7 +6,7 @@
 
 ### Classes
 
-* [`winget`](#winget): == Class: winget  This class manages the installation and configuration of the Windows Package Manager (winget). It ensures winget is availab
+* [`winget`](#winget): Manages the installation and configuration of the Windows Package Manager (winget).
 * [`winget::packages`](#winget--packages): Declare winget packages from a Hiera-friendly hash.
 * [`winget::settings`](#winget--settings): Manage the winget client configuration (settings.json).
 * [`winget::sources`](#winget--sources): Manage winget package sources from a Hiera-friendly hash.
@@ -15,9 +15,9 @@
 ### Defined types
 
 * [`winget::configure`](#winget--configure): Apply a winget configuration file (`winget configure`).
-* [`winget::install::github`](#winget--install--github): == Define: winget::install::github  Installs winget from GitHub releases by downloading the AppX/MSIX bundle and installing it with Add-AppxP
-* [`winget::install::local`](#winget--install--local): == Define: winget::install::local  Installs winget from a local AppX/MSIX/MSIXBundle file. Use this for offline installation where no interne
-* [`winget::install::msstore`](#winget--install--msstore): == Define: winget::install::msstore  Installs winget from the Microsoft CDN distribution of App Installer (`https://aka.ms/getwinget`, a .msi
+* [`winget::install::github`](#winget--install--github): Installs winget from GitHub releases.
+* [`winget::install::local`](#winget--install--local): Installs winget from a local AppX/MSIX/MSIXBundle file.
+* [`winget::install::msstore`](#winget--install--msstore): Installs winget from the Microsoft CDN distribution of App Installer.
 * [`winget::pin`](#winget--pin): Pin (hold) a winget package against unattended upgrades.
 * [`winget::source`](#winget--source): Manage a single winget package source.
 
@@ -87,10 +87,7 @@ with the `winget::sources` class.
 
 ### <a name="winget"></a>`winget`
 
-== Class: winget
-
-This class manages the installation and configuration of the Windows Package Manager (winget).
-It ensures winget is available on the system so that the `winget` package provider can function.
+Ensures winget is available on the system so that the `winget` package provider can function.
 
 === Prerequisites
 
@@ -218,7 +215,7 @@ Default value: `[]`
 Data type: `Optional[String]`
 
 Proxy URL for downloading winget (e.g., 'http://proxy.example.com:8080'). Only used
-when downloading from Microsoft Store or GitHub. Default: undef (uses system proxy).
+when downloading from Microsoft CDN or GitHub. Default: undef (uses system proxy).
 
 Default value: `undef`
 
@@ -860,8 +857,6 @@ Default value: `true`
 
 ### <a name="winget--install--github"></a>`winget::install::github`
 
-== Define: winget::install::github
-
 Installs winget from GitHub releases by downloading the AppX/MSIX bundle
 and installing it with Add-AppxPackage. This is the recommended method for
 pinning a specific winget version.
@@ -924,8 +919,6 @@ Default value: `10`
 
 ### <a name="winget--install--local"></a>`winget::install::local`
 
-== Define: winget::install::local
-
 Installs winget from a local AppX/MSIX/MSIXBundle file. Use this for offline
 installation where no internet access is available.
 
@@ -982,8 +975,6 @@ Typically the VCLibs / UI.Xaml framework packages on offline hosts.
 Default value: `[]`
 
 ### <a name="winget--install--msstore"></a>`winget::install::msstore`
-
-== Define: winget::install::msstore
 
 Installs winget from the Microsoft CDN distribution of App Installer
 (`https://aka.ms/getwinget`, a .msixbundle). This method is used instead of
@@ -1381,7 +1372,7 @@ List winget packages with available upgrades (read-only, makes no changes). For 
 
 Data type: `Optional[Boolean]`
 
-Include pinned packages in the listing. By default pinned packages are still listed (use `upgrade_now` without `include_pinned` to skip them during upgrades).
+When false, exclude pinned packages from the listing. Default true: pinned packages are still listed.
 
 ### <a name="upgrade_now"></a>`upgrade_now`
 

@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# == Define: winget::install::local
+# @summary Installs winget from a local AppX/MSIX/MSIXBundle file.
 #
 # Installs winget from a local AppX/MSIX/MSIXBundle file. Use this for offline
 # installation where no internet access is available.

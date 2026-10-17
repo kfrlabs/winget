@@ -13,7 +13,7 @@ require 'puppet_x/winget/path_resolver'
 # memoized invocation per process, while `winget_pins` is a fast local
 # `winget pin list` query. To avoid paying the upgrade cost on every agent
 # run, either cache the fact with a TTL in facter.conf
-# (`facts: { ttls: [{ winget_upgrades: "1 day" }] }`) or opt out entirely with
+# (`facts: { ttls: [{ winget_upgrades: "7 days" }] }`) or opt out entirely with
 # `WINGET_UPGRADES_ENABLED=false` (the upgrade fact then returns []).
 # rubocop:disable Style/ClassAndModuleChildren
 module PuppetX

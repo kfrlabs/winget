@@ -69,6 +69,32 @@ function Get-AvailableOffset($header, $versionStart) {
   return ($versionStart + 'Version'.Length + $m.Index)
 }
 
+function Get-PinnedIds($winget) {
+  $ids = @()
+  $lines = @(& $winget pin list --accept-source-agreements --disable-interactivity 2>&1)
+  if ($LASTEXITCODE -ne 0) { return $ids }
+  $headerIdx = @()
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    if (Test-TableHeader $lines[$i]) { $headerIdx += $i }
+  }
+  foreach ($h in $headerIdx) {
+    $offsets = Get-ColumnOffsets $lines[$h]
+    if (-not $offsets) { continue }
+    for ($j = $h + 2; $j -lt $lines.Count; $j++) {
+      $line = $lines[$j]
+      if ([string]::IsNullOrWhiteSpace($line)) { continue }
+      if (Test-TableHeader $line) { break }
+      if ($line -match '^\s*[-=]+\s*$') { continue }
+      if ($line.Length -lt $offsets.Version) { continue }
+      $id = $line.Substring($offsets.Id, $offsets.Version - $offsets.Id).Trim()
+      if ([string]::IsNullOrWhiteSpace($id)) { continue }
+      if ($id -match '\s') { continue }
+      if ($ids -notcontains $id) { $ids += $id }
+    }
+  }
+  return $ids
+}
+
 function Get-UpgradeRows($lines) {
   $rows = @()
   $seen = @{}
@@ -115,6 +141,16 @@ if (-not $winget) {
 
 $rawLines = @(& $winget upgrade --accept-source-agreements --disable-interactivity 2>&1)
 $upgrades = @(Get-UpgradeRows $rawLines)
+
+# By default pinned packages are still listed; only exclude them when
+# include_pinned is explicitly false (mirrors upgrade_now without include_pinned).
+if ($taskParams.ContainsKey('include_pinned') -and -not $taskParams['include_pinned']) {
+  $pinned = @(Get-PinnedIds $winget)
+  if ($pinned.Count -gt 0) {
+    $lowerPinned = @($pinned | ForEach-Object { "$_".ToLowerInvariant() })
+    $upgrades = @($upgrades | Where-Object { $lowerPinned -notcontains "$($_.id)".ToLowerInvariant() })
+  }
+}
 
 Write-Output (@{ upgrades = $upgrades } | ConvertTo-Json -Depth 4 -Compress)
 exit 0

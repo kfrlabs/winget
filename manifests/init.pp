@@ -1,9 +1,8 @@
 # frozen_string_literal: true
 
-# == Class: winget
+# @summary Manages the installation and configuration of the Windows Package Manager (winget).
 #
-# This class manages the installation and configuration of the Windows Package Manager (winget).
-# It ensures winget is available on the system so that the `winget` package provider can function.
+# Ensures winget is available on the system so that the `winget` package provider can function.
 #
 # === Prerequisites
 #
@@ -62,7 +61,7 @@
 #
 # @param proxy
 #   Proxy URL for downloading winget (e.g., 'http://proxy.example.com:8080'). Only used
-#   when downloading from Microsoft Store or GitHub. Default: undef (uses system proxy).
+#   when downloading from Microsoft CDN or GitHub. Default: undef (uses system proxy).
 #
 # @param accept_source_agreements
 #   Whether to automatically accept source agreements during bootstrap. Default: true.

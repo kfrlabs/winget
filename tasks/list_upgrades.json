@@ -3,7 +3,7 @@
   "input_method": "stdin",
   "parameters": {
     "include_pinned": {
-      "description": "Include pinned packages in the listing. By default pinned packages are still listed (use `upgrade_now` without `include_pinned` to skip them during upgrades).",
+      "description": "When false, exclude pinned packages from the listing. Default true: pinned packages are still listed.",
       "type": "Optional[Boolean]"
     }
   }
