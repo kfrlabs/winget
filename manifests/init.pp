@@ -220,10 +220,14 @@ class winget (
               # fallback would never run). Both execs carry an `unless`
               # presence guard; the catalog applies cdn first, and the
               # fallback still runs when cdn fails.
+              # `fail_on_error => false`: a failed cdn attempt must not mark
+              # Class['winget'] as failed, otherwise every resource ordered
+              # after it is skipped even when the github fallback succeeds.
               winget::install::msstore { 'winget':
                 ensure                   => $real_ensure,
                 accept_source_agreements => $accept_source_agreements,
                 proxy                    => $proxy,
+                fail_on_error            => false,
               }
               winget::install::github { 'winget_fallback':
                 ensure => $real_ensure,
@@ -245,10 +249,15 @@ class winget (
   # elsewhere wins via the `defined()` guard instead of failing with a
   # duplicate declaration.
   if !$packages.empty and !defined(Class['winget::packages']) {
+    # `require` orders the sub-class after everything contained in this
+    # class (the bootstrap execs), so packages never run before winget is
+    # installed. The sub-class is not contained here: that would create a
+    # dependency cycle with `Class['winget'] -> Package <| provider == winget |>`.
     class { 'winget::packages':
       entries         => $packages,
       schedule        => $packages_schedule,
       reboot_resource => $packages_reboot_resource,
+      require         => Class['winget'],
     }
   }
 
@@ -257,6 +266,7 @@ class winget (
       entries         => $sources,
       reset_defaults  => $sources_reset_defaults,
       default_sources => $sources_default_sources,
+      require         => Class['winget'],
     }
   }
 
@@ -265,6 +275,7 @@ class winget (
       config                => $settings,
       experimental_features => $experimental_features,
       settings_path         => $settings_path,
+      require               => Class['winget'],
     }
   }
 }

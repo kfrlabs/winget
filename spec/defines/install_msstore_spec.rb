@@ -32,6 +32,10 @@ describe 'winget::install::msstore' do
       .with_unless(%r{Get-AppxPackage -AllUsers Microsoft\.DesktopAppInstaller})
   end
 
+  it 'fails the run on error by default' do
+    is_expected.to contain_exec('winget_install_msstore_winget').with_returns([0])
+  end
+
   it 'sets no proxy environment by default' do
     exec = catalogue.resource('Exec[winget_install_msstore_winget]')
     expect(exec[:environment]).to be_nil
@@ -57,6 +61,16 @@ describe 'winget::install::msstore' do
       is_expected.to contain_exec('winget_install_msstore_winget')
         .with_tries(5)
         .with_try_sleep(30)
+    end
+  end
+
+  context 'with fail_on_error => false' do
+    let(:params) { { fail_on_error: false } }
+
+    it { is_expected.to compile.with_all_deps }
+
+    it 'accepts exit code 1 so a failed attempt does not fail the run' do
+      is_expected.to contain_exec('winget_install_msstore_winget').with_returns([0, 1])
     end
   end
 
