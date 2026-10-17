@@ -4,8 +4,10 @@
 #
 # Writes `%LOCALAPPDATA%/Packages/Microsoft.DesktopAppInstaller_*/LocalState/settings.json`
 # for the Puppet agent account (SYSTEM by default, i.e.
-# `C:/Windows/System32/config/systemprofile/...`), merging `settings` with
-# `experimental_features` under the `experimentalFeatures` key. Accepts any
+# `C:/Windows/System32/config/systemprofile/...`), merging `config` with
+# `experimental_features` under the `experimentalFeatures` key. Hiera key
+# `winget::settings::config`. The common case is driven from the main class
+# (`winget::settings` Hiera key, which declares this class automatically). Accepts any
 # documented winget setting (`source.autoUpdateIntervalInMinutes`,
 # `installBehavior.preferences.scope`, `telemetry.disable`, ...): see
 # `winget settings` and https://aka.ms/winget-settings.
@@ -16,29 +18,30 @@
 # `scope => 'machine'` on every package (see `winget::packages`).
 #
 # Nothing is managed while winget itself is absent (fresh bootstrap): order
-# settings after the bootstrap class:
+# settings after the bootstrap class (automatic when driven via `include
+# winget` with the `winget::settings` Hiera key):
 #
 #   Class['winget'] -> Class['winget::settings']
 #
-# The managed file is replaced wholesale on every run: `settings` and
+# The managed file is replaced wholesale on every run: `config` and
 # `experimental_features` are NOT merged with whatever settings.json
 # already contains on the node, they fully define its content. Declare
 # every key you care about (including ones a previous manual `winget
 # settings` edit may have set) or they will be dropped.
 #
-# @param settings
+# @param config
 #   Arbitrary settings.json content merged as-is (e.g.
 #   `{ 'telemetry' => { 'disable' => true } }`).
 # @param experimental_features
 #   Experimental features merged under the `experimentalFeatures` key,
-#   overriding any `experimentalFeatures` entry of `settings`.
+#   overriding any `experimentalFeatures` entry of `config`.
 # @param settings_path
 #   Explicit settings.json path (e.g. to manage another user's file).
 #   Undef (default) manages the SYSTEM profile file used by the agent.
 #
 # @example Disable telemetry and prefer machine scope
 #   class { 'winget::settings':
-#     settings => {
+#     config => {
 #       'telemetry'       => { 'disable' => true },
 #       'installBehavior' => { 'preferences' => { 'scope' => 'machine' } },
 #     },
@@ -49,7 +52,7 @@
 #     experimental_features => { 'resume' => true },
 #   }
 class winget::settings (
-  Hash $settings = {},
+  Hash $config = {},
   Hash $experimental_features = {},
   Optional[String] $settings_path = undef,
 ) {
@@ -58,9 +61,9 @@ class winget::settings (
   }
 
   if $experimental_features.empty {
-    $merged = $settings
+    $merged = $config
   } else {
-    $merged = $settings + { 'experimentalFeatures' => $experimental_features }
+    $merged = $config + { 'experimentalFeatures' => $experimental_features }
   }
 
   $resolved_path = $settings_path ? {

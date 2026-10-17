@@ -71,6 +71,48 @@
 #   Whether to manage winget installation. Set to false to disable the bootstrap class
 #   while keeping the provider available. Default: true.
 #
+# @param packages
+#   Packages to manage, keyed by winget ID (see `Winget::PackagesHash`).
+#   Hiera key: `winget::packages`. Declares `winget::packages`
+#   automatically when non-empty, so `include winget` is enough.
+#
+# @param packages_schedule
+#   Default Puppet `schedule` forwarded to `winget::packages`.
+#
+# @param packages_reboot_resource
+#   Optional `reboot` resource title forwarded to `winget::packages`.
+#
+# @param sources
+#   Sources to manage, keyed by source name (see `Winget::SourcesHash`).
+#   Hiera key: `winget::sources`. Declares `winget::sources`
+#   automatically when non-empty (or when `sources_reset_defaults` is true).
+#
+# @param sources_reset_defaults
+#   Whether to reset winget sources before adding `sources`.
+#
+# @param sources_default_sources
+#   Source names treated as defaults by the reset guard.
+#
+# @param settings
+#   Arbitrary settings.json content (see `winget::settings`).
+#   Hiera key: `winget::settings`. Declares `winget::settings`
+#   automatically when non-empty.
+#
+# @param experimental_features
+#   Experimental features forwarded to `winget::settings`.
+#   Hiera key: `winget::experimental_features`.
+#
+# @param settings_path
+#   Explicit settings.json path forwarded to `winget::settings`.
+#
+# @example Manage packages from Hiera
+#   # hiera.yaml:
+#   # winget::packages:
+#   #   Git.Git:
+#   #     ensure: present
+#   #     scope: machine
+#   include winget
+#
 # === Ordering
 #
 # Ordering with packages using the winget provider is done at the class level:
@@ -86,6 +128,15 @@ class winget (
   Optional[String] $proxy           = undef,
   Boolean $accept_source_agreements = true,
   Boolean $enable_winget            = true,
+  Winget::PackagesHash $packages = {},
+  Optional[String[1]] $packages_schedule = undef,
+  Optional[String[1]] $packages_reboot_resource = undef,
+  Winget::SourcesHash $sources = {},
+  Boolean $sources_reset_defaults = false,
+  Array[String[1]] $sources_default_sources = ['msstore', 'winget', 'winget-font'],
+  Hash $settings = {},
+  Hash $experimental_features = {},
+  Optional[String] $settings_path = undef,
 ) {
   # Validate that we're on Windows
   if $facts['os']['family'] != 'windows' {
@@ -185,6 +236,35 @@ class winget (
           }
         }
       }
+    }
+  }
+
+  # Fleet configuration from the main class (Hiera keys `winget::packages`,
+  # `winget::sources`, `winget::settings`): declare the sub-classes only when
+  # there is something to manage. An explicit `include winget::packages`
+  # elsewhere wins via the `defined()` guard instead of failing with a
+  # duplicate declaration.
+  if !$packages.empty and !defined(Class['winget::packages']) {
+    class { 'winget::packages':
+      entries         => $packages,
+      schedule        => $packages_schedule,
+      reboot_resource => $packages_reboot_resource,
+    }
+  }
+
+  if (!$sources.empty or $sources_reset_defaults) and !defined(Class['winget::sources']) {
+    class { 'winget::sources':
+      entries         => $sources,
+      reset_defaults  => $sources_reset_defaults,
+      default_sources => $sources_default_sources,
+    }
+  }
+
+  if (!$settings.empty or !$experimental_features.empty) and !defined(Class['winget::settings']) {
+    class { 'winget::settings':
+      config                => $settings,
+      experimental_features => $experimental_features,
+      settings_path         => $settings_path,
     }
   }
 }

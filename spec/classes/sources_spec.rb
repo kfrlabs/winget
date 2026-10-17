@@ -20,7 +20,7 @@ describe 'winget::sources' do
       it { is_expected.to have_winget__source_resource_count(0) }
 
       context 'with a shorthand URL entry' do
-        let(:params) { { sources: { 'contoso' => 'https://winget.contoso.example.com/cache' } } }
+        let(:params) { { entries: { 'contoso' => 'https://winget.contoso.example.com/cache' } } }
 
         it { is_expected.to compile.with_all_deps }
 
@@ -34,7 +34,7 @@ describe 'winget::sources' do
       context 'with a full source hash' do
         let(:params) do
           {
-            sources: {
+            entries: {
               'partners' => {
                 'url'         => 'https://winget.partners.example.com/cache',
                 'source_type' => 'Microsoft.Rest',
@@ -59,7 +59,7 @@ describe 'winget::sources' do
       context 'with reset_defaults' do
         let(:params) do
           {
-            sources: { 'contoso' => 'https://winget.contoso.example.com/cache' },
+            entries: { 'contoso' => 'https://winget.contoso.example.com/cache' },
             reset_defaults: true,
           }
         end
@@ -78,7 +78,7 @@ describe 'winget::sources' do
       end
 
       context 'without reset_defaults' do
-        let(:params) { { sources: { 'contoso' => 'https://winget.contoso.example.com/cache' } } }
+        let(:params) { { entries: { 'contoso' => 'https://winget.contoso.example.com/cache' } } }
 
         it { is_expected.to compile.with_all_deps }
         it { is_expected.not_to contain_exec('winget-source-reset') }
@@ -86,7 +86,7 @@ describe 'winget::sources' do
 
       context 'without winget (fresh bootstrap)' do
         let(:facts) { os_facts }
-        let(:params) { { sources: { 'contoso' => 'https://winget.contoso.example.com/cache' } } }
+        let(:params) { { entries: { 'contoso' => 'https://winget.contoso.example.com/cache' } } }
 
         it { is_expected.to compile.with_all_deps }
         it { is_expected.to have_winget__source_resource_count(0) }

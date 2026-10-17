@@ -2,13 +2,16 @@
 
 # @summary Manage winget package sources from a Hiera-friendly hash.
 #
-# Reads source declarations from the `sources` hash (automatic Hiera lookup
-# via `winget::sources::sources`, see `Winget::SourcesHash`) and declares one
-# `winget::source` resource per entry. Entries accept either a shorthand URL
+# Reads source declarations from the `entries` hash (Hiera key
+# `winget::sources::entries`, see `Winget::SourcesHash`) and declares one
+# `winget::source` resource per entry. The common case is driven from the
+# main class (`winget::sources` Hiera key, which declares this class
+# automatically): use `include winget`.
+# Entries accept either a shorthand URL
 # string or a full `Winget::SourceEntry` hash (private REST sources, trust level,
 # explicit sources, auth headers).
 #
-# With `reset_defaults => true`, non-default sources missing from `sources`
+# With `reset_defaults => true`, non-default sources missing from `entries`
 # are removed first (`winget source reset --force`, idempotent guard included),
 # then the declared sources are added. The defaults themselves
 # (`msstore`, `winget`, `winget-font`, overridable via `default_sources`) are
@@ -19,20 +22,29 @@
 #
 #   Class['winget'] -> Class['winget::sources']
 #
-# @param sources
+# @param entries
 #   Sources to manage, keyed by source name. Values are either a shorthand
 #   URL string or a `Winget::SourceEntry` hash.
 # @param reset_defaults
-#   Whether to reset winget sources to the defaults plus `sources`
+#   Whether to reset winget sources to the defaults plus `entries`
 #   (`winget source reset --force`) before adding declared sources.
 #   Default: false (unmanaged sources are left alone).
 # @param default_sources
 #   Source names treated as defaults by the reset guard. Default:
 #   `['msstore', 'winget', 'winget-font']`.
 #
-# @example Private REST source from Hiera
+# @example Private REST source from Hiera (preferred)
 #   # hiera.yaml:
-#   # winget::sources::sources:
+#   # winget::sources:
+#   #   contoso:
+#   #     url: https://winget.contoso.example.com/cache
+#   #     source_type: Microsoft.Rest
+#   #     trust_level: trusted
+#   include winget
+#
+# @example Private REST source via the sub-class directly
+#   # hiera.yaml:
+#   # winget::sources::entries:
 #   #   contoso:
 #   #     url: https://winget.contoso.example.com/cache
 #   #     source_type: Microsoft.Rest
@@ -40,7 +52,7 @@
 #   include winget::sources
 #   Class['winget'] -> Class['winget::sources']
 class winget::sources (
-  Winget::SourcesHash $sources = {},
+  Winget::SourcesHash $entries = {},
   Boolean $reset_defaults = false,
   Array[String[1]] $default_sources = ['msstore', 'winget', 'winget-font'],
 ) {
@@ -62,7 +74,7 @@ class winget::sources (
     if $reset_defaults {
       # Sources listed by `winget source list` (header and separator skipped,
       # first column is the name) beyond the expected set trigger the reset.
-      $expected = ($default_sources + $sources.keys).unique
+      $expected = ($default_sources + $entries.keys).unique
       $quoted = $expected.map |$source_name| { "'${source_name}'" }
       $expected_list = join($quoted, ', ')
       exec { 'winget-source-reset':
@@ -72,7 +84,7 @@ class winget::sources (
       }
     }
 
-    $pairs = $sources.map |$name, $spec| {
+    $pairs = $entries.map |$name, $spec| {
       if $spec =~ String {
         # Assigned (not a bare line-start `[`) to satisfy
         # manifest_whitespace_opening_bracket_before.

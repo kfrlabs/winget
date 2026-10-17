@@ -185,6 +185,41 @@ describe 'winget' do
         it { is_expected.not_to contain_winget__install__github('winget_fallback') }
       end
 
+      context 'with packages (preferred Hiera key winget::packages)' do
+        let(:params) { { packages: { 'Git.Git' => 'installed' } } }
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_class('winget::packages').with_entries('Git.Git' => 'installed') }
+        it { is_expected.to contain_package('Git.Git').with_ensure('installed').with_provider('winget') }
+      end
+
+      context 'with packages_schedule and packages_reboot_resource forwarding' do
+        let(:params) do
+          {
+            packages: { 'Git.Git' => 'installed' },
+            packages_schedule: 'maintenance-window',
+          }
+        end
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_class('winget::packages').with_schedule('maintenance-window') }
+      end
+
+      context 'with sources (preferred Hiera key winget::sources)' do
+        let(:params) { { sources: { 'contoso' => 'https://winget.contoso.example.com/cache' } } }
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_class('winget::sources') }
+        it { is_expected.to contain_winget__source('contoso') }
+      end
+
+      context 'with settings (preferred Hiera key winget::settings)' do
+        let(:params) { { settings: { 'telemetry' => { 'disable' => true } } } }
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_class('winget::settings') }
+      end
+
       context 'with invalid source value' do
         let(:params) { { source: 'invalid' } }
 
