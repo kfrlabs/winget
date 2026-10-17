@@ -56,8 +56,11 @@ an individual is officially representing the community in public spaces.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement via the contact
-details published in `metadata.json` (`kfrlabs/winget` issue tracker).
+reported privately to the community leaders responsible for enforcement by
+opening a
+[private security advisory](https://github.com/kfrlabs/winget/security/advisories/new)
+on this repository (only the maintainers can see it). Please do not report
+conduct issues in public issues or pull requests.
 All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the

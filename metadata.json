@@ -4,6 +4,13 @@
   "author": "kfrlabs",
   "summary": "Puppet module for managing Windows packages via winget",
   "license": "Apache-2.0",
+  "tags": [
+    "windows",
+    "winget",
+    "package",
+    "package-manager",
+    "provider"
+  ],
   "source": "https://github.com/kfrlabs/winget",
   "project_page": "https://github.com/kfrlabs/winget",
   "issues_url": "https://github.com/kfrlabs/winget/issues",
