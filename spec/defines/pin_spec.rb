@@ -79,6 +79,18 @@ describe 'winget::pin' do
     end
   end
 
+  context "with quotes in version and source (issue #41)" do
+    let(:params) { { version: "1.2'a", source: "msstore'b" } }
+
+    it { is_expected.to compile.with_all_deps }
+
+    it 'doubles single quotes in version and source flags' do
+      command = catalogue.resource('Exec', 'winget-pin-add-Google.Chrome')[:command]
+      expect(command).to include("--version '1.2''a'")
+      expect(command).to include("--source 'msstore''b'")
+    end
+  end
+
   context 'without winget (fresh bootstrap)' do
     let(:facts) do
       {

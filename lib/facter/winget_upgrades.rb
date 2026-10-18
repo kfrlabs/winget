@@ -24,6 +24,9 @@
 # Or opt out entirely with the `WINGET_UPGRADES_ENABLED=false`
 # environment variable (or `facts: { blocklist: ["winget_upgrades"] }`):
 # the fact then returns `[]` without shelling out.
+#
+# Every invocation runs with a timeout (120 s by default, `WINGET_COMMAND_TIMEOUT`
+# overrides): a stuck winget returns `[]` instead of stalling the agent run.
 
 require 'puppet_x/winget/facts'
 

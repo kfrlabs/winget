@@ -92,6 +92,13 @@ package { 'Git.Git':
 }
 ```
 
+A newer pin runs `winget upgrade --version`. Moving to an older
+plain-numeric version (`2.40.0` -> `2.39.0`) uninstalls then installs
+(winget cannot downgrade in place): this is destructive (user data may be
+lost, the app is stopped) and not atomic, so only plain `x.y.z` versions
+trigger it. Suffixed versions (`2.40.0.windows.1`, `1.0.0-rc1`, `v1.2`)
+never uninstall: they fall back to `install --version` with a notice.
+
 #### Latest Version (Upgrade)
 
 ```puppet
@@ -176,6 +183,13 @@ facts : {
 Or opt out entirely with the `WINGET_UPGRADES_ENABLED=false` environment
 variable (`false`, `0`, `no`, `off`; or `facts : { blocklist : [ "winget_upgrades" ] }`): the fact then
 returns `[]` without shelling out.
+
+Every winget invocation runs with a timeout (`PuppetX::Winget::Runner`):
+120 s for read-only commands (`list`, `show`, `pin list`, `upgrade`
+listing) and 600 s for `install`/`upgrade`/`uninstall`, overridable with
+`WINGET_COMMAND_TIMEOUT` (seconds). A timeout kills the whole process
+tree; the provider fails with a clear error while facts return `nil`/`[]`
+so the agent never hangs on a stuck winget.
 
 A package already declared elsewhere in the catalog (e.g. `package {
 'Git.Git': ensure => present }`) is left alone by `winget::upgrade`:
@@ -596,6 +610,10 @@ class { 'winget':
 # All packages using winget provider will run after winget bootstrap
 Class['winget'] -> Package <| provider == winget |>
 ```
+
+`ensure => absent` on class `winget` removes winget without any `Package`
+resource, so the collector above cannot cycle; `winget::packages` entries
+cannot converge once winget itself is gone (a warning is logged).
 
 #### First Run (Bootstrap and Packages in One Catalog)
 

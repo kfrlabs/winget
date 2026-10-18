@@ -133,6 +133,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and columns are mapped positionally instead of matching English/French
   header words, so localized headers (e.g. Spanish `Versión`, German
   `Quelle`) parse like the English/French ones
+- Fixed-width parsing no longer misaligns on non-ASCII names (issue #32):
+  rows are sliced by display width (East Asian Width + astral wide) in
+  `PuppetX::Winget::Facts` (`display_slice`) and in both tasks
+  (`Get-DisplaySubstring`), so display-aligned CJK, accented, `…`-truncated
+  and emoji names parse like ASCII ones
+- No timeout on winget commands (issue #33): all invocations go through
+  `PuppetX::Winget::Runner` (`Open3` + `Timeout`, whole process tree killed
+  on expiry). Defaults are 120 s for read-only commands and 600 s for
+  `install`/`upgrade`/`uninstall`, overridable with `WINGET_COMMAND_TIMEOUT`.
+  The provider raises `Puppet::Error` on timeout, facts return `nil`/`[]`
+- Pinned-version downgrade no longer uninstalls on suffixed versions
+  (issue #34): only a plain-numeric (`x.y.z`) wanted version lower than a
+  plain-numeric installed version triggers uninstall-then-install; anything
+  else (`2.40.0.windows.1`, `1.0.0-rc1`, `v1.2`) falls back to
+  `install --version` with a notice
+- Class `winget` with `ensure => absent` no longer uses the package provider
+  (issue #35): it declares `winget::install::msstore { 'winget': ensure =>
+  'absent' }`, so the documented `Class['winget'] -> Package <| provider ==
+  winget |>` collector cannot cycle, and no `Package[...]` remains in the
+  catalog
+- Tasks `Find-Winget` no longer picks the wrong version (issue #36):
+  `WindowsApps` is scanned first (Ruby resolver order) and candidates are
+  sorted numerically on the version segment (`[version]`), so `1.10`
+  beats `1.9`
+- Task `winget::upgrade_now` no longer falls back to "upgrade everything"
+  on bad input (issue #37): non-empty stdin that cannot be parsed, or
+  wrong-typed `ids`/`exclude`/`include_pinned`, returns
+  `{"_error":{"kind":"winget/invalid-input"}}` with exit 1 before winget
+  runs; `ids`/`exclude` entries must be non-empty strings without whitespace
+- PowerShell escaping (issue #41): `winget::configure`, `winget::pin`
+  (`version`, `source`), `winget::source` (`url`, `source_type`,
+  `trust_level`), `winget::sources` (expected-list quoting) and
+  `winget::settings` (parent dir) now double single quotes (`''`) like
+  `winget::install::local` already did; `winget::source` keeps
+  `[regex]::Escape` for the list guard
 
 ## [1.0.0] - 2026-10-13
 

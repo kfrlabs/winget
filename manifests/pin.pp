@@ -61,18 +61,26 @@ define winget::pin (
   if $winget {
     # Escape single quotes for PowerShell single-quoted literals.
     $safe_title = regsubst($title, "'", "''", 'G')
+    $safe_version = $version ? {
+      undef   => undef,
+      default => regsubst($version, "'", "''", 'G'),
+    }
+    $safe_source_param = $source ? {
+      undef   => undef,
+      default => regsubst($source, "'", "''", 'G'),
+    }
 
-    $version_flag = $version ? {
+    $version_flag = $safe_version ? {
       undef   => '',
-      default => " --version '${version}'",
+      default => " --version '${safe_version}'",
     }
     $blocking_flag = $blocking ? {
       true    => ' --blocking',
       default => '',
     }
-    $source_flag = $source ? {
+    $source_flag = $safe_source_param ? {
       undef   => '',
-      default => " --source '${source}'",
+      default => " --source '${safe_source_param}'",
     }
 
     $pinned_check = "${powershell} -NoProfile -Command \"if (& '${winget}' pin list --id '${safe_title}' --exact --disable-interactivity | Select-String -Quiet -SimpleMatch '${safe_title}') { exit 0 } else { exit 1 }\""

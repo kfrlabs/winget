@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'puppet_x/winget/runner'
 require 'puppet_x/winget/facts'
 
 RSpec.describe PuppetX::Winget::Facts do
@@ -81,7 +82,7 @@ RSpec.describe PuppetX::Winget::Facts do
       before(:each) do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new('', 1)
         )
       end
@@ -95,7 +96,7 @@ RSpec.describe PuppetX::Winget::Facts do
       before(:each) do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new("v1.8.2391\n", 0)
         )
       end
@@ -109,7 +110,7 @@ RSpec.describe PuppetX::Winget::Facts do
       before(:each) do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new("1.8.2391\n", 0)
         )
       end
@@ -123,7 +124,7 @@ RSpec.describe PuppetX::Winget::Facts do
       before(:each) do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new("\n", 0)
         )
       end
@@ -137,7 +138,7 @@ RSpec.describe PuppetX::Winget::Facts do
       before(:each) do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
-        allow(Puppet::Util::Execution).to receive(:execute).and_raise(StandardError.new('boom'))
+        allow(PuppetX::Winget::Runner).to receive(:run).and_raise(StandardError.new('boom'))
       end
 
       it 'returns nil and does not raise' do
@@ -148,7 +149,7 @@ RSpec.describe PuppetX::Winget::Facts do
     context 'with an explicit path override' do
       before(:each) do
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new('v1.8.2391', 0)
         )
       end
@@ -228,7 +229,7 @@ RSpec.describe PuppetX::Winget::Facts do
       before(:each) do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new('', 1),
         )
       end
@@ -242,7 +243,7 @@ RSpec.describe PuppetX::Winget::Facts do
       before(:each) do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new(upgrade_output, 0),
         )
       end
@@ -255,9 +256,8 @@ RSpec.describe PuppetX::Winget::Facts do
       end
 
       it 'queries winget non-interactively' do
-        expect(Puppet::Util::Execution).to receive(:execute).with(
-          [winget_exe, 'upgrade', '--accept-source-agreements', '--disable-interactivity'],
-          failonfail: false, combine: true,
+        expect(PuppetX::Winget::Runner).to receive(:run).with(
+          [winget_exe, 'upgrade', '--accept-source-agreements', '--disable-interactivity']
         ).and_return(
           Puppet::Util::Execution::ProcessOutput.new(upgrade_output, 0),
         )
@@ -272,7 +272,7 @@ RSpec.describe PuppetX::Winget::Facts do
       before(:each) do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
-        allow(Puppet::Util::Execution).to receive(:execute).and_raise(StandardError.new('boom'))
+        allow(PuppetX::Winget::Runner).to receive(:run).and_raise(StandardError.new('boom'))
       end
 
       it 'returns an empty array and does not raise' do
@@ -283,7 +283,7 @@ RSpec.describe PuppetX::Winget::Facts do
     context 'with an explicit path override' do
       before(:each) do
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new(upgrade_output, 0),
         )
       end
@@ -304,7 +304,7 @@ RSpec.describe PuppetX::Winget::Facts do
       end
 
       it 'returns [] without shelling out' do
-        expect(Puppet::Util::Execution).not_to receive(:execute)
+        expect(PuppetX::Winget::Runner).not_to receive(:run)
         expect(described_class.winget_upgrades(winget_exe)).to eq([])
       end
     end
@@ -633,6 +633,25 @@ RSpec.describe PuppetX::Winget::Facts do
       ])
     end
 
+    it 'parses display-aligned CJK, accented, truncated and emoji rows (issue #32)' do
+      output = File.read(File.join(fixtures_root, 'wide', 'upgrade-display.txt'), encoding: 'UTF-8')
+      expect(described_class.parse_winget_upgrade(output)).to eq([
+        { 'id' => 'CJK.Package', 'current_version' => '1.0', 'available_version' => '2.0' },
+        { 'id' => 'Accented.App', 'current_version' => '3.1', 'available_version' => '3.2' },
+        { 'id' => 'Truncated.App', 'current_version' => '6.0.35', 'available_version' => '6.0.36' },
+        { 'id' => 'Emoji.Party', 'current_version' => '3.0', 'available_version' => '4.0' },
+      ])
+    end
+
+    it 'slices by display width, not character count' do
+      expect(described_class.display_width('日本語')).to eq(6)
+      expect(described_class.display_width('Café')).to eq(4)
+      expect(described_class.display_width('🎉')).to eq(2)
+      line = "日本語パッケージ        CJK.Package                   1.0           2.0           winget"
+      # Id display columns 24...54 yield the package ID despite fewer characters.
+      expect(described_class.display_substring(line, 24, 54).strip).to eq('CJK.Package')
+    end
+
     it 'parses every pin list fixture, whatever language the header uses' do
       Dir[File.join(fixtures_root, 'pin_list', '*.txt')].sort.each do |path|
         output = File.read(path, encoding: 'UTF-8')
@@ -667,7 +686,7 @@ RSpec.describe PuppetX::Winget::Facts do
       before(:each) do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new(upgrade_output, 0),
         )
       end
@@ -685,7 +704,7 @@ RSpec.describe PuppetX::Winget::Facts do
       end
 
       it 'returns [] without shelling out' do
-        expect(Puppet::Util::Execution).not_to receive(:execute)
+        expect(PuppetX::Winget::Runner).not_to receive(:run)
         expect(described_class.winget_upgrades(winget_exe)).to eq([])
       end
     end
@@ -694,7 +713,7 @@ RSpec.describe PuppetX::Winget::Facts do
       before(:each) do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
-        allow(Puppet::Util::Execution).to receive(:execute).and_raise(StandardError.new('boom'))
+        allow(PuppetX::Winget::Runner).to receive(:run).and_raise(StandardError.new('boom'))
       end
 
       it 'returns an empty array and does not raise' do
@@ -740,7 +759,7 @@ RSpec.describe PuppetX::Winget::Facts do
       before(:each) do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new(pin_output, 0),
         )
       end
@@ -750,9 +769,8 @@ RSpec.describe PuppetX::Winget::Facts do
       end
 
       it 'lists pins non-interactively' do
-        expect(Puppet::Util::Execution).to receive(:execute).with(
-          [winget_exe, 'pin', 'list', '--accept-source-agreements', '--disable-interactivity'],
-          failonfail: false, combine: true,
+        expect(PuppetX::Winget::Runner).to receive(:run).with(
+          [winget_exe, 'pin', 'list', '--accept-source-agreements', '--disable-interactivity']
         ).and_return(
           Puppet::Util::Execution::ProcessOutput.new(pin_output, 0),
         )
@@ -774,7 +792,7 @@ RSpec.describe PuppetX::Winget::Facts do
       before(:each) do
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new('Invalid argument', 0x8A150002),
         )
       end
@@ -801,7 +819,7 @@ RSpec.describe PuppetX::Winget::Facts do
         --------------------------------------------------------------------
         Git               Git.Git                 2.40.0    2.41.0      winget
       OUTPUT
-      expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
+      expect(PuppetX::Winget::Runner).to receive(:run).once.and_return(
         Puppet::Util::Execution::ProcessOutput.new(output, 0),
       )
       expect(described_class.winget_upgrades).to eq([
@@ -820,7 +838,7 @@ RSpec.describe PuppetX::Winget::Facts do
         Git               Git.Git                 2.40.0    2.41.0      winget
       OUTPUT
       second = Puppet::Util::Execution::ProcessOutput.new(second_output, 0)
-      allow(Puppet::Util::Execution).to receive(:execute).and_return(first, second)
+      allow(PuppetX::Winget::Runner).to receive(:run).and_return(first, second)
       expect(described_class.winget_upgrades).to eq([])
       described_class.reset!
       expect(described_class.winget_upgrades).to eq([

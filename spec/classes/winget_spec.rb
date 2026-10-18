@@ -32,7 +32,15 @@ describe 'winget' do
         let(:params) { { ensure: 'absent' } }
 
         it { is_expected.to compile.with_all_deps }
-        it { is_expected.to contain_package('Microsoft.DesktopAppInstaller').with_ensure('absent') }
+        it { is_expected.to contain_winget__install__msstore('winget').with_ensure('absent') }
+        it { is_expected.not_to contain_package('Microsoft.DesktopAppInstaller') }
+
+        context 'with the documented package collector' do
+          let(:pre_condition) { "Class['winget'] -> Package <| provider == winget |>" }
+
+          it { is_expected.to compile.with_all_deps }
+          it { is_expected.not_to contain_package('Microsoft.DesktopAppInstaller') }
+        end
       end
 
       context 'with ensure => specific version' do

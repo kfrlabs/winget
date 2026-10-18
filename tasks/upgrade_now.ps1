@@ -39,32 +39,63 @@ function ConvertTo-UInt32ExitCode([int]$Code) {
 }
 
 function Read-TaskParams {
+  # Fail closed: non-empty stdin that cannot be parsed, or fields with the
+  # wrong type, throw so the caller exits 1 before winget runs. An empty
+  # `ids` means "upgrade everything", so silently falling back to defaults
+  # on bad input would turn a typo into a fleet-wide upgrade.
   $params = @{ ids = @(); exclude = @(); include_pinned = $false }
+  $raw = $null
+  if ([Console]::IsInputRedirected) {
+    $raw = [Console]::In.ReadToEnd()
+  }
+  if ([string]::IsNullOrWhiteSpace($raw)) { return $params }
   try {
-    if ([Console]::IsInputRedirected) {
-      $raw = [Console]::In.ReadToEnd()
-      if (-not [string]::IsNullOrWhiteSpace($raw)) {
-        $parsed = $raw | ConvertFrom-Json
-        if ($null -ne $parsed.ids) { $params['ids'] = @($parsed.ids) }
-        if ($null -ne $parsed.exclude) { $params['exclude'] = @($parsed.exclude) }
-        if ($null -ne $parsed.include_pinned) { $params['include_pinned'] = [bool]$parsed.include_pinned }
+    $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    throw "Invalid task input JSON: $($_.Exception.Message)"
+  }
+  if ($null -ne $parsed.ids) {
+    if ($parsed.ids -isnot [array]) { throw "Invalid task input: 'ids' must be an array" }
+    foreach ($entry in $parsed.ids) {
+      if ([string]::IsNullOrWhiteSpace($entry) -or ("$entry" -match '\s')) {
+        throw "Invalid task input: 'ids' entries must be non-empty strings without whitespace"
       }
     }
-  } catch {
-    # Unparseable task input: fall back to defaults.
+    $params['ids'] = @($parsed.ids | ForEach-Object { "$_" })
+  }
+  if ($null -ne $parsed.exclude) {
+    if ($parsed.exclude -isnot [array]) { throw "Invalid task input: 'exclude' must be an array" }
+    foreach ($entry in $parsed.exclude) {
+      if ([string]::IsNullOrWhiteSpace($entry) -or ("$entry" -match '\s')) {
+        throw "Invalid task input: 'exclude' entries must be non-empty strings without whitespace"
+      }
+    }
+    $params['exclude'] = @($parsed.exclude | ForEach-Object { "$_" })
+  }
+  if ($null -ne $parsed.include_pinned) {
+    if ($parsed.include_pinned -isnot [bool]) { throw "Invalid task input: 'include_pinned' must be a boolean" }
+    $params['include_pinned'] = $parsed.include_pinned
   }
   return $params
 }
 
 function Find-Winget {
-  $cmd = Get-Command winget.exe -ErrorAction SilentlyContinue
-  if ($cmd) { return $cmd.Source }
+  # Highest installed version first (WindowsApps scan before PATH, like the
+  # Ruby resolver): compare the version segment numerically, not the full
+  # path as text (1.9 sorts after 1.10 as text).
   $roots = @($env:ProgramFiles, ${env:ProgramW6432}) | Where-Object { $_ } | Select-Object -Unique
   foreach ($root in $roots) {
     $pattern = Join-Path $root 'WindowsApps\Microsoft.DesktopAppInstaller_*__8wekyb3d8bbwe\winget.exe'
     $hits = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue
-    if ($hits) { return ($hits | Sort-Object FullName -Descending | Select-Object -First 1).FullName }
+    if ($hits) {
+      $best = @($hits) | Sort-Object {
+        try { [version](($_.Directory.Name -split '_')[1]) } catch { [version]'0.0' }
+      } -Descending | Select-Object -First 1
+      if ($best) { return $best.FullName }
+    }
   }
+  $cmd = Get-Command winget.exe -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
   return $null
 }
 
@@ -72,11 +103,81 @@ function Test-TableSeparator($line) {
   return ("$line" -match '^\s*[-=]{3,}\s*$')
 }
 
+
+function Test-WideCodepoint([int]$code) {
+  if ($code -ge 0x1100 -and $code -le 0x115F) { return $true }
+  if ($code -ge 0x2329 -and $code -le 0x232A) { return $true }
+  if ($code -ge 0x2E80 -and $code -le 0x303E) { return $true }
+  if ($code -ge 0x3041 -and $code -le 0x33FF) { return $true }
+  if ($code -ge 0x3400 -and $code -le 0x4DBF) { return $true }
+  if ($code -ge 0x4E00 -and $code -le 0xA4CF) { return $true }
+  if ($code -ge 0xAC00 -and $code -le 0xD7A3) { return $true }
+  if ($code -ge 0xF900 -and $code -le 0xFAFF) { return $true }
+  if ($code -ge 0xFE10 -and $code -le 0xFE19) { return $true }
+  if ($code -ge 0xFE30 -and $code -le 0xFE4F) { return $true }
+  if ($code -ge 0xFF00 -and $code -le 0xFF60) { return $true }
+  if ($code -ge 0xFFE0 -and $code -le 0xFFE6) { return $true }
+  if ($code -ge 0x20000 -and $code -le 0x2FFFD) { return $true }
+  if ($code -ge 0x30000 -and $code -le 0x3FFFD) { return $true }
+  if ($code -ge 0x1F300 -and $code -le 0x1FAFF) { return $true }
+  if ($code -ge 0x2600 -and $code -le 0x27BF) { return $true }
+  if ($code -ge 0x2B00 -and $code -le 0x2BFF) { return $true }
+  if ($code -ge 0x10000) { return $true }
+  return $false
+}
+
+function Get-DisplayWidth([string]$text) {
+  $w = 0
+  $i = 0
+  while ($i -lt $text.Length) {
+    $c = [int][char]$text[$i]
+    if ($c -ge 0xD800 -and $c -le 0xDBFF -and ($i + 1) -lt $text.Length) {
+      $low = [int][char]$text[$i + 1]
+      if ($low -ge 0xDC00 -and $low -le 0xDFFF) {
+        $code = 0x10000 + (($c - 0xD800) * 0x400) + ($low - 0xDC00)
+        if (Test-WideCodepoint $code) { $w += 2 } else { $w += 2 }
+        $i += 2
+        continue
+      }
+    }
+    if (Test-WideCodepoint $c) { $w += 2 } else { $w += 1 }
+    $i++
+  }
+  return $w
+}
+
+function Get-DisplaySubstring([string]$line, [int]$startDisplay, [int]$endDisplay) {
+  # Mirrors Ruby display_substring: slice by terminal display columns.
+  if ($null -eq $endDisplay) { $endDisplay = [int]::MaxValue }
+  $out = ''
+  $col = 0
+  $i = 0
+  while ($i -lt $line.Length) {
+    $unitLen = 1
+    $charWidth = 1
+    $c = [int][char]$line[$i]
+    $code = $c
+    if ($c -ge 0xD800 -and $c -le 0xDBFF -and ($i + 1) -lt $line.Length) {
+      $low = [int][char]$line[$i + 1]
+      if ($low -ge 0xDC00 -and $low -le 0xDFFF) {
+        $code = 0x10000 + (($c - 0xD800) * 0x400) + ($low - 0xDC00)
+        $unitLen = 2
+      }
+    }
+    if ($unitLen -eq 2) { $charWidth = 2 }
+    elseif (Test-WideCodepoint $code) { $charWidth = 2 }
+    if ($col -ge $startDisplay -and $col -lt $endDisplay) { $out += $line.Substring($i, $unitLen) }
+    $col += $charWidth
+    if ($col -ge $endDisplay) { break }
+    $i += $unitLen
+  }
+  return $out
+}
+
 function Get-HeaderCellOffsets($header) {
-  # Offsets count UTF-16 code units (.NET strings): a package name with
-  # astral-plane characters (e.g. emoji) before the Id column shifts every
-  # offset by one unit per character, while the Ruby facts count characters
-  # (BMP-only assumption for full parity; BMP text aligns on both sides).
+  # Header offsets are display columns (headers are ASCII, so display
+  # equals UTF-16 units here). Data rows are sliced with Get-DisplaySubstring
+  # so CJK/emoji names align like the Ruby display_slice.
   $text = "$header"
   $starts = @()
   $pos = 0
@@ -162,8 +263,8 @@ function Get-UpgradableIds($winget) {
     for ($j = $h + 2; $j -lt $tableEnd; $j++) {
       $line = $clean[$j]
       if ($line -match '^\s*[-=]+\s*$') { continue }
-      if ($line.Length -lt $offsets.Version) { continue }
-      $id = $line.Substring($offsets.Id, $offsets.Version - $offsets.Id).Trim()
+      if ((Get-DisplayWidth $line) -lt $offsets.Version) { continue }
+      $id = (Get-DisplaySubstring $line $offsets.Id $offsets.Version).Trim()
       if ([string]::IsNullOrWhiteSpace($id)) { continue }
       if ($id -match '\s') { continue }
       if ($seen.ContainsKey($id)) { continue }
@@ -188,8 +289,8 @@ function Get-PinnedIds($winget) {
     for ($j = $h + 2; $j -lt $tableEnd; $j++) {
       $line = $clean[$j]
       if ($line -match '^\s*[-=]+\s*$') { continue }
-      if ($line.Length -lt $offsets.Version) { continue }
-      $id = $line.Substring($offsets.Id, $offsets.Version - $offsets.Id).Trim()
+      if ((Get-DisplayWidth $line) -lt $offsets.Version) { continue }
+      $id = (Get-DisplaySubstring $line $offsets.Id $offsets.Version).Trim()
       if ([string]::IsNullOrWhiteSpace($id)) { continue }
       if ($id -match '\s') { continue }
       if ($ids -notcontains $id) { $ids += $id }
@@ -198,7 +299,12 @@ function Get-PinnedIds($winget) {
   return $ids
 }
 
-$taskParams = Read-TaskParams
+try {
+  $taskParams = Read-TaskParams
+} catch {
+  Write-Output (@{ _error = @{ kind = 'winget/invalid-input'; msg = "$_" } } | ConvertTo-Json -Depth 3 -Compress)
+  exit 1
+}
 
 $winget = Find-Winget
 if (-not $winget) {

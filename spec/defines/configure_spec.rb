@@ -41,6 +41,20 @@ describe 'winget::configure' do
     end
   end
 
+  context "with a quote in source (issue #41)" do
+    let(:title) { 'baseline' }
+    let(:params) { { source: "C:/Configs/a'b.winget" } }
+
+    it { is_expected.to compile.with_all_deps }
+
+    it 'doubles single quotes in configure commands' do
+      command = catalogue.resource('Exec', 'winget-configure-baseline')[:command]
+      expect(command).to include("configure -f 'C:/Configs/a''b.winget'")
+      guard = catalogue.resource('Exec', 'winget-configure-baseline')[:unless]
+      expect(guard).to include("configure test -f 'C:/Configs/a''b.winget'")
+    end
+  end
+
   context 'without winget (fresh bootstrap)' do
     let(:facts) do
       {

@@ -55,8 +55,8 @@ module PuppetX
           winget = path || winget_path
           return nil unless winget && File.exist?(winget)
 
-          require 'puppet/util/execution'
-          output = Puppet::Util::Execution.execute([winget, '--version'], failonfail: false, combine: true)
+          require 'puppet_x/winget/runner'
+          output = PuppetX::Winget::Runner.run([winget, '--version'])
           return nil unless output.exitstatus.zero?
 
           version = output.strip.sub(%r{\Av}, '')
@@ -93,7 +93,8 @@ module PuppetX
           @upgrade_output
         end
 
-        # Single uncached `winget upgrade` run. Never raises.
+        # Single uncached `winget upgrade` run. Never raises (timeout returns
+        # nil like any other failure so a hung winget cannot stall the agent).
         # @param path [String, nil] Optional override for the winget path (testing)
         # @return [String, nil] Raw command output, or nil when disabled/absent/failed
         def run_upgrade(path)
@@ -102,10 +103,9 @@ module PuppetX
           winget = path || winget_path
           return nil unless winget && File.exist?(winget)
 
-          require 'puppet/util/execution'
-          output = Puppet::Util::Execution.execute(
+          require 'puppet_x/winget/runner'
+          output = PuppetX::Winget::Runner.run(
             [winget, 'upgrade', '--accept-source-agreements', '--disable-interactivity'],
-            failonfail: false, combine: true,
           )
           output.to_s
         rescue StandardError
@@ -172,9 +172,9 @@ module PuppetX
             data_lines = lines[(header_idx + 2)...table_end] || []
             data_lines.each do |line|
               next if line.match?(%r{^\s*[-=]+\s*$})
-              next if line.length < version_start
+              next if display_width(line) < version_start
 
-              id = line[id_start...version_start]&.strip
+              id = display_substring(line, id_start, version_start)&.strip
               next if id.nil? || id.empty?
               next if id.match?(%r{\s})
               next if seen.include?(id.downcase)
@@ -183,9 +183,9 @@ module PuppetX
               current = nil
               available = nil
               if available_start
-                current = line[version_start...available_start]&.strip
+                current = display_substring(line, version_start, available_start)&.strip
                 current = nil if current.nil? || current.empty?
-                rest = line[available_start..]&.strip
+                rest = display_substring(line, available_start, nil)&.strip
                 available = (rest.nil? || rest.empty?) ? nil : rest.split(%r{\s+}).first
               end
               rows << { 'id' => id, 'current_version' => current, 'available_version' => available }
@@ -207,17 +207,17 @@ module PuppetX
         end
 
         # Single uncached `winget pin list` run. A non-zero exit (old winget
-        # without `pin`, or any failure) is treated as "no pins". Never raises.
+        # without `pin`, or any failure, including timeout) is treated as
+        # "no pins". Never raises.
         # @param path [String, nil] Optional override for the winget path (testing)
         # @return [String, nil] Raw command output, or nil when absent/failed
         def run_pins(path)
           winget = path || winget_path
           return nil unless winget && File.exist?(winget)
 
-          require 'puppet/util/execution'
-          output = Puppet::Util::Execution.execute(
+          require 'puppet_x/winget/runner'
+          output = PuppetX::Winget::Runner.run(
             [winget, 'pin', 'list', '--accept-source-agreements', '--disable-interactivity'],
-            failonfail: false, combine: true,
           )
           return nil unless output.exitstatus.zero?
 
@@ -261,9 +261,9 @@ module PuppetX
             data_lines = lines[(header_idx + 2)...table_end] || []
             data_lines.each do |line|
               next if line.match?(%r{^\s*[-=]+\s*$})
-              next if line.length < version_start
+              next if display_width(line) < version_start
 
-              id = line[id_start...version_start]&.strip
+              id = display_substring(line, id_start, version_start)&.strip
               next if id.nil? || id.empty?
               next if id.match?(%r{\s})
               next if seen.include?(id.downcase)
@@ -304,18 +304,18 @@ module PuppetX
             data_lines = lines[(header_idx + 2)...table_end] || []
             data_lines.each do |line|
               next if line.match?(%r{^\s*[-=]+\s*$})
-              next if line.length < version_start
+              next if display_width(line) < version_start
 
-              name = line[0...id_start]&.strip
-              id = line[id_start...version_start]&.strip
+              name = display_substring(line, 0, id_start)&.strip
+              id = display_substring(line, id_start, version_start)&.strip
               if offsets.length >= 5
-                version = line[version_start...offsets[3]]&.strip
-                source = line[offsets[4]..]&.strip
+                version = display_substring(line, version_start, offsets[3])&.strip
+                source = display_substring(line, offsets[4], nil)&.strip
               elsif offsets.length == 4
-                version = line[version_start...offsets[3]]&.strip
-                source = line[offsets[3]..]&.strip
+                version = display_substring(line, version_start, offsets[3])&.strip
+                source = display_substring(line, offsets[3], nil)&.strip
               else
-                version = line[version_start..]&.strip
+                version = display_substring(line, version_start, nil)&.strip
                 source = nil
               end
               source = 'winget' if source.nil? || source.empty?
@@ -368,11 +368,10 @@ module PuppetX
 
         # Segment a header line into [text, offset] cells on 2+ spaces or
         # tabs. The first cell is anchored at the line start (leading empty
-        # segments are skipped). Offsets count characters (Ruby strings):
-        # the PowerShell port counts UTF-16 code units instead, so a package
-        # name with astral-plane characters (e.g. emoji) before the Id
-        # column aligns here but may shift by one unit per character there
-        # (BMP-only assumption, see tasks/).
+        # segments are skipped). Offsets are display columns (headers are
+        # ASCII in all observed locales, so display equals character and
+        # UTF-16 offsets here); data rows are sliced with display_slice /
+        # Get-DisplaySubstring so CJK/emoji names align on both sides.
         # @param header [String] Table header line
         # @return [Array<Array(String, Integer)>] Cell text with its start offset
         def header_cells(header)
@@ -391,10 +390,76 @@ module PuppetX
         end
 
         # Start offsets of the header cells (see {.header_cells}).
+        # Display columns equal character offsets here (headers are ASCII
+        # in all observed locales), so the same numbers serve both.
         # @param header [String] Table header line
         # @return [Array<Integer>] Cell start offsets in column order
         def header_cell_offsets(header)
           header_cells(header).map { |(_text, idx)| idx }
+        end
+
+        # Wide character ranges (East Asian Width W/F): CJK, Hiragana,
+        # Katakana, Hangul, fullwidth forms and planes 2-3. Anything else
+        # (including accents and the `…` truncation marker) is single width,
+        # except astral-plane characters (emoji) which terminals render wide.
+        WIDE_RANGES = [
+          [0x1100, 0x115F], [0x2329, 0x232A], [0x2E80, 0x303E],
+          [0x3041, 0x33FF], [0x3400, 0x4DBF], [0x4E00, 0xA4CF],
+          [0xAC00, 0xD7A3], [0xF900, 0xFAFF], [0xFE10, 0xFE19],
+          [0xFE30, 0xFE4F], [0xFF00, 0xFF60], [0xFFE0, 0xFFE6],
+          [0x20000, 0x2FFFD], [0x30000, 0x3FFFD],
+          [0x1F300, 0x1FAFF], [0x2600, 0x27BF], [0x2B00, 0x2BFF]
+        ].freeze
+
+        # Whether a codepoint occupies two terminal columns.
+        # @param ord [Integer] Unicode codepoint
+        # @return [Boolean]
+        def wide_char?(ord)
+          return true if ord >= 0x10000
+
+          WIDE_RANGES.any? { |first, last| ord >= first && ord <= last }
+        end
+
+        # Terminal display width of a string (wide chars count 2).
+        # @param str [String, nil]
+        # @return [Integer]
+        def display_width(str)
+          width = 0
+          str.to_s.each_codepoint do |ord|
+            width += wide_char?(ord) ? 2 : 1
+          end
+          width
+        end
+
+        # Slice a line by display columns (winget pads by display width,
+        # not by character count, so CJK names shift character offsets).
+        # @param line [String] Data row
+        # @param start_display [Integer] Display column where the slice starts
+        # @param length_display [Integer, nil] Display width (nil restores to end)
+        # @return [String] Slice text
+        def display_slice(line, start_display, length_display = nil)
+          result = +''
+          col = 0
+          line.to_s.each_char do |ch|
+            w = wide_char?(ch.ord) ? 2 : 1
+            if length_display.nil?
+              result << ch if col >= start_display
+            elsif col >= start_display && col < start_display + length_display
+              result << ch
+            end
+            col += w
+            break if !length_display.nil? && col >= start_display + length_display
+          end
+          result
+        end
+
+        # Display-width-aware substring from start display column to end
+        # display column (exclusive), mirroring `line[start...end]` semantics.
+        # @return [String]
+        def display_substring(line, start_display, end_display = nil)
+          return display_slice(line, start_display, nil) if end_display.nil?
+
+          display_slice(line, start_display, end_display - start_display)
         end
 
         # Indices of the table header lines: the visible line directly

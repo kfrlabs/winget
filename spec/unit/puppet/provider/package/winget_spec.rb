@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'puppet_x/winget/runner'
 require 'puppet_x/winget/path_resolver'
 require 'puppet/provider/package/winget'
 
@@ -96,27 +97,24 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     end
 
     it 'places the subcommand first and appends install flags' do
-      expect(Puppet::Util::Execution).to receive(:execute).with(
-        [winget_path, 'install', '--id', 'Git.Git', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity', '--exact', '--silent'],
-        hash_including(failonfail: false, combine: true)
+      expect(PuppetX::Winget::Runner).to receive(:run).with(
+        [winget_path, 'install', '--id', 'Git.Git', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity', '--exact', '--silent'], hash_including(write: true)
       ).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
 
       provider.winget_exec('install', '--id', 'Git.Git')
     end
 
     it 'uses only show-supported flags for show' do
-      expect(Puppet::Util::Execution).to receive(:execute).with(
-        [winget_path, 'show', '--id', 'Git.Git', '--accept-source-agreements', '--disable-interactivity', '--exact'],
-        hash_including(failonfail: false, combine: true)
+      expect(PuppetX::Winget::Runner).to receive(:run).with(
+        [winget_path, 'show', '--id', 'Git.Git', '--accept-source-agreements', '--disable-interactivity', '--exact'], hash_including(write: false)
       ).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
 
       provider.winget_exec('show', '--id', 'Git.Git')
     end
 
     it 'uses only uninstall-supported flags for uninstall' do
-      expect(Puppet::Util::Execution).to receive(:execute).with(
-        [winget_path, 'uninstall', '--id', 'Git.Git', '--accept-source-agreements', '--disable-interactivity', '--exact', '--silent'],
-        hash_including(failonfail: false, combine: true)
+      expect(PuppetX::Winget::Runner).to receive(:run).with(
+        [winget_path, 'uninstall', '--id', 'Git.Git', '--accept-source-agreements', '--disable-interactivity', '--exact', '--silent'], hash_including(write: true)
       ).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
 
       provider.winget_exec('uninstall', '--id', 'Git.Git')
@@ -373,6 +371,56 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
           provider.install
         end
       end
+
+      context 'with suffixed versions (issue #34, no destructive downgrade)' do
+        let(:ok) { Puppet::Util::Execution::ProcessOutput.new('', 0) }
+
+        it 'does not uninstall when wanted has a windows suffix (2.40.0.windows.1 vs 2.40.0)' do
+          allow(described_class).to receive(:instances_list).and_return(
+            'git.git' => { name: 'Git', version: '2.40.0', source: 'winget', id: 'Git.Git' },
+          )
+          resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: '2.40.0.windows.1', provider: :winget)
+          prov = described_class.new(resource)
+          expect(prov).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--version', '2.40.0.windows.1').and_return(ok)
+          expect(prov).not_to receive(:uninstall)
+          allow(Puppet).to receive(:notice)
+          prov.install
+        end
+
+        it 'upgrades when installed has a windows suffix (2.40.0 vs 2.40.0.windows.1)' do
+          allow(described_class).to receive(:instances_list).and_return(
+            'git.git' => { name: 'Git', version: '2.40.0.windows.1', source: 'winget', id: 'Git.Git' },
+          )
+          resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: '2.40.0', provider: :winget)
+          prov = described_class.new(resource)
+          expect(prov).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git', '--version', '2.40.0').and_return(ok)
+          expect(prov).not_to receive(:uninstall)
+          prov.install
+        end
+
+        it 'does not uninstall a release-candidate pin (1.0.0-rc1 vs 1.0.0)' do
+          allow(described_class).to receive(:instances_list).and_return(
+            'git.git' => { name: 'Git', version: '1.0.0', source: 'winget', id: 'Git.Git' },
+          )
+          resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: '1.0.0-rc1', provider: :winget)
+          prov = described_class.new(resource)
+          expect(prov).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--version', '1.0.0-rc1').and_return(ok)
+          expect(prov).not_to receive(:uninstall)
+          allow(Puppet).to receive(:notice)
+          prov.install
+        end
+
+        it 'upgrades a v-prefixed pin (v1.2 vs 1.1) without uninstalling' do
+          allow(described_class).to receive(:instances_list).and_return(
+            'git.git' => { name: 'Git', version: '1.1', source: 'winget', id: 'Git.Git' },
+          )
+          resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: 'v1.2', provider: :winget)
+          prov = described_class.new(resource)
+          expect(prov).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git', '--version', 'v1.2').and_return(ok)
+          expect(prov).not_to receive(:uninstall)
+          prov.install
+        end
+      end
     end
 
     context 'with install_options source as hash with string key' do
@@ -562,7 +610,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     context 'when query and latest run on the same resource' do
       it 'lists installed packages only once' do
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new("Name     Id       Version\n-------------------------\nGit      Git.Git  2.40.0", 0),
         )
         expect(described_class).to receive(:instances_list).once.and_call_original
@@ -732,7 +780,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     end
 
     it 'returns provider instances for each installed package' do
-      allow(Puppet::Util::Execution).to receive(:execute).and_return(
+      allow(PuppetX::Winget::Runner).to receive(:run).and_return(
         Puppet::Util::Execution::ProcessOutput.new("Name     Id       Version\n-------------------------\nGit      Git.Git  2.40.0", 0),
       )
       instances = described_class.instances
@@ -756,7 +804,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     end
 
     it 'returns current package state when installed' do
-      allow(Puppet::Util::Execution).to receive(:execute).and_return(
+      allow(PuppetX::Winget::Runner).to receive(:run).and_return(
         Puppet::Util::Execution::ProcessOutput.new("Name     Id       Version\n-------------------------\nGit      Git.Git  2.40.0", 0),
       )
       result = provider.query
@@ -764,7 +812,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     end
 
     it 'returns nil when not installed' do
-      allow(Puppet::Util::Execution).to receive(:execute).and_return(
+      allow(PuppetX::Winget::Runner).to receive(:run).and_return(
         Puppet::Util::Execution::ProcessOutput.new("Name     Id       Version\n-------------------------", 0),
       )
       expect(provider.query).to be_nil
@@ -800,7 +848,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     end
 
     it 'runs winget list only once for repeated lookups' do
-      expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
+      expect(PuppetX::Winget::Runner).to receive(:run).once.and_return(
         Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
       )
       described_class.instances_list
@@ -808,7 +856,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     end
 
     it 're-lists after clear_list_cache!' do
-      expect(Puppet::Util::Execution).to receive(:execute).twice.and_return(
+      expect(PuppetX::Winget::Runner).to receive(:run).twice.and_return(
         Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
       )
       described_class.instances_list
@@ -818,7 +866,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     it 'does not cache a failed listing (non-zero exit) as an empty list' do
       allow(Puppet).to receive(:warning)
-      expect(Puppet::Util::Execution).to receive(:execute).twice.and_return(
+      expect(PuppetX::Winget::Runner).to receive(:run).twice.and_return(
         Puppet::Util::Execution::ProcessOutput.new('Internal error', 0x8A150001),
       )
       expect(described_class.instances_list).to eq({})
@@ -829,20 +877,20 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     it 'does not cache a listing that raised' do
       allow(Puppet).to receive(:warning)
-      allow(Puppet::Util::Execution).to receive(:execute).and_raise(StandardError.new('boom'))
+      allow(PuppetX::Winget::Runner).to receive(:run).and_raise(StandardError.new('boom'))
       expect(described_class.instances_list).to eq({})
       expect(described_class.list_unavailable?).to be true
     end
 
     it 'marks the list available again once a listing succeeds' do
       allow(Puppet).to receive(:warning)
-      allow(Puppet::Util::Execution).to receive(:execute).and_return(
+      allow(PuppetX::Winget::Runner).to receive(:run).and_return(
         Puppet::Util::Execution::ProcessOutput.new('Internal error', 0x8A150001),
       )
       described_class.instances_list
       expect(described_class.list_unavailable?).to be true
 
-      allow(Puppet::Util::Execution).to receive(:execute).and_return(
+      allow(PuppetX::Winget::Runner).to receive(:run).and_return(
         Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
       )
       described_class.instances_list
@@ -851,7 +899,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     it 'query raises instead of reporting absent when the listing failed' do
       allow(Puppet).to receive(:warning)
-      allow(Puppet::Util::Execution).to receive(:execute).and_return(
+      allow(PuppetX::Winget::Runner).to receive(:run).and_return(
         Puppet::Util::Execution::ProcessOutput.new('Internal error', 0x8A150001),
       )
       resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: :installed, provider: :winget)
@@ -877,7 +925,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     end
 
     it 'shares a single winget list across resources' do
-      expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
+      expect(PuppetX::Winget::Runner).to receive(:run).once.and_return(
         Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
       )
       resource_a = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: :installed, provider: :winget)
@@ -889,7 +937,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     end
 
     it 'caches absent entries without re-listing' do
-      expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
+      expect(PuppetX::Winget::Runner).to receive(:run).once.and_return(
         Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
       )
       missing = Puppet::Type.type(:package).new(name: 'Missing.Missing', ensure: :installed, provider: :winget)
@@ -899,7 +947,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     end
 
     it 'matches IDs case-insensitively' do
-      expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
+      expect(PuppetX::Winget::Runner).to receive(:run).once.and_return(
         Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
       )
       resource = Puppet::Type.type(:package).new(name: 'git.git', ensure: :installed, provider: :winget)
@@ -909,7 +957,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     end
 
     it 'skips resources managed by another provider' do
-      expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
+      expect(PuppetX::Winget::Runner).to receive(:run).once.and_return(
         Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
       )
       winget_resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: :installed, provider: :winget)
@@ -1051,7 +1099,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
 
       it 'install clears the list cache so the next lookup re-lists' do
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
         )
         described_class.instances_list
@@ -1060,7 +1108,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
         )
         provider.install
         described_class.instances_list
-        expect(Puppet::Util::Execution).to have_received(:execute).twice
+        expect(PuppetX::Winget::Runner).to have_received(:run).twice
       end
 
       it 'update clears the per-instance entry so query observes the new state' do
@@ -1106,10 +1154,8 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: :installed, provider: :winget)
       described_class.prefetch('Git.Git' => resource)
       expect(resource.provider.query).to be_nil
-      expect(Puppet::Util::Execution).to receive(:execute).with(
-        ['C:/Path/to/winget.exe', 'install', '--id', 'Git.Git', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity', '--exact', '--silent'],
-        hash_including(failonfail: false, combine: true)
-      ).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
+      expect(PuppetX::Winget::Runner).to receive(:run).with(
+        ['C:/Path/to/winget.exe', 'install', '--id', 'Git.Git', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity', '--exact', '--silent'], any_args).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
       resource.provider.install
     end
   end
@@ -1146,11 +1192,11 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     context 'when the resource does not manage mark' do
       it 'query reports no mark and spends no pin list call' do
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new(list_output, 0),
         )
         expect(provider.query).to eq({ name: 'Git.Git', ensure: '2.40.0', provider: :winget })
-        expect(Puppet::Util::Execution).to have_received(:execute).once
+        expect(PuppetX::Winget::Runner).to have_received(:run).once
       end
     end
 
@@ -1165,7 +1211,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
 
       it 'query reports hold when the package is pinned' do
-        allow(Puppet::Util::Execution).to receive(:execute) do |cmd, *_args|
+        allow(PuppetX::Winget::Runner).to receive(:run) do |cmd, **_kwargs|
           if cmd.include?('pin')
             Puppet::Util::Execution::ProcessOutput.new(pin_output, 0)
           else
@@ -1176,7 +1222,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
 
       it 'query reports none when the package is not pinned' do
-        allow(Puppet::Util::Execution).to receive(:execute) do |cmd, *_args|
+        allow(PuppetX::Winget::Runner).to receive(:run) do |cmd, **_kwargs|
           if cmd.include?('pin')
             Puppet::Util::Execution::ProcessOutput.new("No pins exist.\n", 0)
           else
@@ -1190,22 +1236,20 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     describe '#hold' do
       it 'calls winget pin add non-interactively' do
         allow(described_class).to receive(:pins_list).and_return({})
-        expect(Puppet::Util::Execution).to receive(:execute).with(
-          [winget_path, 'pin', 'add', '--id', 'Git.Git', '--accept-source-agreements', '--disable-interactivity', '--exact'],
-          hash_including(failonfail: false, combine: true)
-        ).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
+        expect(PuppetX::Winget::Runner).to receive(:run).with(
+          [winget_path, 'pin', 'add', '--id', 'Git.Git', '--accept-source-agreements', '--disable-interactivity', '--exact'], any_args).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
         expect(provider.hold).to be_nil
       end
 
       it 'is idempotent when already pinned' do
         allow(described_class).to receive(:pins_list).and_return('git.git' => true)
-        expect(Puppet::Util::Execution).not_to receive(:execute)
+        expect(PuppetX::Winget::Runner).not_to receive(:run)
         expect(provider.hold).to be_nil
       end
 
       it 'raises a meaningful error when pinning fails' do
         allow(described_class).to receive(:pins_list).and_return({})
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new('pin failed', 1),
         )
         expect { provider.hold }.to raise_error(Puppet::Error, %r{Failed to pin package})
@@ -1215,16 +1259,14 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     describe '#unhold' do
       it 'calls winget pin remove non-interactively' do
         allow(described_class).to receive(:pins_list).and_return('git.git' => true)
-        expect(Puppet::Util::Execution).to receive(:execute).with(
-          [winget_path, 'pin', 'remove', '--id', 'Git.Git', '--accept-source-agreements', '--disable-interactivity', '--exact'],
-          hash_including(failonfail: false, combine: true)
-        ).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
+        expect(PuppetX::Winget::Runner).to receive(:run).with(
+          [winget_path, 'pin', 'remove', '--id', 'Git.Git', '--accept-source-agreements', '--disable-interactivity', '--exact'], any_args).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
         expect(provider.unhold).to be_nil
       end
 
       it 'is idempotent when not pinned' do
         allow(described_class).to receive(:pins_list).and_return({})
-        expect(Puppet::Util::Execution).not_to receive(:execute)
+        expect(PuppetX::Winget::Runner).not_to receive(:run)
         expect(provider.unhold).to be_nil
       end
     end
@@ -1256,7 +1298,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     describe '.pins_list caching' do
       it 'runs winget pin list only once for repeated lookups' do
-        expect(Puppet::Util::Execution).to receive(:execute).once.and_return(
+        expect(PuppetX::Winget::Runner).to receive(:run).once.and_return(
           Puppet::Util::Execution::ProcessOutput.new(pin_output, 0),
         )
         described_class.pins_list
@@ -1265,7 +1307,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
 
       it 're-lists after clear_pins_cache!' do
-        expect(Puppet::Util::Execution).to receive(:execute).twice.and_return(
+        expect(PuppetX::Winget::Runner).to receive(:run).twice.and_return(
           Puppet::Util::Execution::ProcessOutput.new(pin_output, 0),
         )
         described_class.pins_list
@@ -1275,12 +1317,12 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
       it 'returns an empty hash when winget is not suitable' do
         allow(described_class).to receive(:suitable?).and_return(false)
-        expect(Puppet::Util::Execution).not_to receive(:execute)
+        expect(PuppetX::Winget::Runner).not_to receive(:run)
         expect(described_class.pins_list).to eq({})
       end
 
       it 'returns an empty hash when pin list fails' do
-        allow(Puppet::Util::Execution).to receive(:execute).and_return(
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new('boom', 1),
         )
         expect(described_class.pins_list).to eq({})

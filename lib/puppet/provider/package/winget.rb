@@ -182,7 +182,9 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
   # Execute a winget command with the non-interactive flags supported by
   # the given subcommand. Flags always follow the subcommand: winget does
-  # not accept them in front of it.
+  # not accept them in front of it. Every call goes through
+  # `PuppetX::Winget::Runner` so a hung winget cannot block the agent;
+  # mutating subcommands get the longer write timeout.
   # @param args [Array<String>] Command arguments (subcommand first, then options)
   # @return [Puppet::Util::Execution::ProcessOutput] Combined command output (a String) with exitstatus
   def winget_exec(*args)
@@ -199,7 +201,13 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
               []
             end
     cmd = [self.class.winget_path, *args, *flags]
-    Puppet::Util::Execution.execute(cmd, failonfail: false, combine: true)
+    require 'puppet_x/winget/runner'
+    write = ['install', 'upgrade', 'uninstall'].include?(args.first.to_s)
+    begin
+      PuppetX::Winget::Runner.run(cmd, write: write)
+    rescue PuppetX::Winget::Runner::TimeoutError => e
+      raise Puppet::Error, _('winget %{action} timed out: %{error}') % { action: args.first, error: e.message }
+    end
   end
 
   # Parse winget list output into a hash of package info
@@ -281,11 +289,17 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   end
 
   # Execute a `winget pin` subcommand non-interactively for this resource.
+  # Timed out calls raise `Puppet::Error` like other provider commands.
   # @param action [String] Pin subcommand ('add' or 'remove')
   # @return [Puppet::Util::Execution::ProcessOutput] Combined command output with exitstatus
   def pin_exec(action)
     args = ['pin', action, '--id', resource[:name], *PuppetX::Winget::Provider::PIN_FLAGS]
-    Puppet::Util::Execution.execute([self.class.winget_path, *args], failonfail: false, combine: true)
+    require 'puppet_x/winget/runner'
+    begin
+      PuppetX::Winget::Runner.run([self.class.winget_path, *args], write: true)
+    rescue PuppetX::Winget::Runner::TimeoutError => e
+      raise Puppet::Error, _('winget pin %{action} timed out: %{error}') % { action: action, error: e.message }
+    end
   end
 
   # Installed package entry from `winget list`. Prefetched once per run
@@ -334,7 +348,13 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   def self.fetch_instances_list
     return {} unless suitable?
 
-    output = Puppet::Util::Execution.execute([winget_path, 'list', *PuppetX::Winget::Provider::LIST_FLAGS], failonfail: false, combine: true)
+    require 'puppet_x/winget/runner'
+    begin
+      output = PuppetX::Winget::Runner.run([winget_path, 'list', *PuppetX::Winget::Provider::LIST_FLAGS])
+    rescue PuppetX::Winget::Runner::TimeoutError => e
+      Puppet.warning(_('winget list timed out; installed package state is unknown this run, no changes will be attempted: %{error}') % { error: e.message })
+      return nil
+    end
     unless output.exitstatus == PuppetX::Winget::Provider::EXIT_SUCCESS
       Puppet.warning(_('winget list failed with exit code %{code}; installed package state is unknown this run, no changes will be attempted: %{output}') % { code: output.exitstatus, output: output })
       return nil
@@ -408,7 +428,13 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
   # Move an installed package to another pinned version. A newer version is
   # a regular `winget upgrade --version`; winget cannot downgrade in place,
-  # so an older version is installed after removing the current one.
+  # so an older plain-numeric version is installed after removing the
+  # current one. Non-plain versions (suffixes like `.windows.1`, `-rc1`,
+  # leading `v`) never trigger the destructive uninstall: Gem treats
+  # suffixed versions as pre-releases, so a suffix change is not a real
+  # downgrade and uninstalling would risk data loss for no benefit. Those
+  # fall back to `install --version` (previous behaviour, idempotent when
+  # winget reports "another version is installed").
   # @param wanted [String] Pinned version from `ensure`
   # @param current [String] Installed version
   def change_version(wanted, current)
@@ -418,9 +444,12 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
       output = winget_exec(*args)
       handle_exit_code(output, 'upgrade')
       refresh_after_change
-    else
+    elsif plain_downgrade?(wanted, current)
       Puppet.notice("winget: downgrading #{resource[:name]} from #{current} to #{wanted} (uninstall, then install)")
       uninstall
+      perform_install(wanted)
+    else
+      Puppet.notice("winget: not uninstalling #{resource[:name]} to move from #{current} to #{wanted} (non-plain version, falling back to install --version)")
       perform_install(wanted)
     end
   end
@@ -561,6 +590,26 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     Gem::Version.new(candidate) > Gem::Version.new(current)
   rescue ArgumentError
     candidate != current
+  end
+
+  # Whether a version string is a plain dotted numeric (`1.2.3`), the only
+  # shape allowed to trigger the destructive uninstall-then-install
+  # downgrade. Anything else (suffixes, leading `v`, ranges) falls back to
+  # `install --version`.
+  # @return [Boolean]
+  def plain_numeric_version?(version)
+    version.is_a?(String) && version.match?(%r{\A\d+(\.\d+)*\z})
+  end
+
+  # Whether moving from current to wanted is a real downgrade: both plain
+  # numeric and wanted strictly lower.
+  # @return [Boolean]
+  def plain_downgrade?(wanted, current)
+    return false unless plain_numeric_version?(wanted) && plain_numeric_version?(current)
+
+    Gem::Version.new(wanted) < Gem::Version.new(current)
+  rescue ArgumentError
+    false
   end
 
   # Extract source from install_options hash/array
