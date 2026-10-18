@@ -127,6 +127,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Select-String -Quiet` guards in `if (...) { exit 0 } else { exit 1 }` so
   the `unless` / `onlyif` exit code reflects the match instead of always
   succeeding (the pipeline alone always exits 0)
+- `winget list` / `upgrade` / `pin list` table parsing is locale-independent
+  in the provider, the facts and the `winget::list_upgrades` /
+  `winget::upgrade_now` tasks: tables are discovered via the separator row
+  and columns are mapped positionally instead of matching English/French
+  header words, so localized headers (e.g. Spanish `Versión`, German
+  `Quelle`) parse like the English/French ones
 
 ## [1.0.0] - 2026-10-13
 

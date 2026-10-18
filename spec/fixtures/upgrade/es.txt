@@ -1,0 +1,10 @@
+Nombre                  Id                            Versión       Disponible    Origen
+----------------------------------------------------------------------------------------
+Git                     Git.Git                       2.40.0        2.41.0        winget
+Notepad++               Notepad++.Notepad++           8.5.4         8.6.0         winget
+Los siguientes paquetes tienen una actualización disponible, pero requieren selección explícita:
+Nombre                  Id                            Versión       Disponible    Origen
+----------------------------------------------------------------------------------------
+Git                     Git.Git                       2.40.0        2.41.0        winget
+Notepad++               Notepad++.Notepad++           8.5.4         8.6.0         winget
+2 actualizaciones disponibles.

@@ -191,6 +191,22 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
     end
 
+    context 'with indented separator-like rows' do
+      let(:output) do
+        <<~OUTPUT
+          Name                  Id                   Version     Source
+          ----------------------------------------------------------------
+          Git                   Git.Git              2.40.0      winget
+             ---
+        OUTPUT
+      end
+
+      it 'skips them like any separator row' do
+        result = provider.parse_winget_list(output)
+        expect(result.keys).to eq(['git.git'])
+      end
+    end
+
     context 'with truncated columns' do
       let(:output) do
         <<~OUTPUT
@@ -257,6 +273,20 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
         )
         expect(result['microsoft.dotnet.aspnetcore.6'][:version]).to eq('6.0.35')
         expect(result['microsoft.dotnet.desktopruntime.6'][:version]).to eq('6.0.35')
+      end
+    end
+
+    context 'with localized list fixtures (structural simulations, see spec/fixtures/README.md)' do
+      let(:fixtures_root) { File.expand_path('../../../../fixtures', __dir__) }
+
+      it 'parses every list fixture, whatever language the header uses' do
+        Dir[File.join(fixtures_root, 'list', '*.txt')].sort.each do |path|
+          output = File.read(path, encoding: 'UTF-8')
+          result = provider.parse_winget_list(output)
+          expect(result.keys).to contain_exactly('git.git', 'notepad++.notepad++'), "expected #{path} to parse"
+          expect(result['git.git']).to eq({ name: 'Git', version: '2.40.0', source: 'winget', id: 'Git.Git' })
+          expect(result['notepad++.notepad++'][:version]).to eq('8.5.4')
+        end
       end
     end
   end

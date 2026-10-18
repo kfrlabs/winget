@@ -68,19 +68,83 @@ function Find-Winget {
   return $null
 }
 
-function Get-ColumnOffsets($header) {
-  $idMatch = [regex]::Match($header, '\bId\b', 'IgnoreCase')
-  $versionMatch = [regex]::Match($header, '\bVersion\b', 'IgnoreCase')
-  if (-not $idMatch.Success -or -not $versionMatch.Success) { return $null }
-  if ($versionMatch.Index -le $idMatch.Index) { return $null }
-  return @{ Id = $idMatch.Index; Version = $versionMatch.Index }
+function Test-TableSeparator($line) {
+  return ("$line" -match '^\s*[-=]{3,}\s*$')
 }
 
+function Get-HeaderCellOffsets($header) {
+  # Offsets count UTF-16 code units (.NET strings): a package name with
+  # astral-plane characters (e.g. emoji) before the Id column shifts every
+  # offset by one unit per character, while the Ruby facts count characters
+  # (BMP-only assumption for full parity; BMP text aligns on both sides).
+  $text = "$header"
+  $starts = @()
+  $pos = 0
+  foreach ($cell in ($text -split '\s{2,}|\t+')) {
+    if ([string]::IsNullOrEmpty($cell)) { continue }
+    $idx = $text.IndexOf($cell, $pos)
+    if ($idx -lt 0) { break }
+    $starts += $idx
+    $pos = $idx + $cell.Length
+  }
+  return $starts
+}
+
+function Find-TableHeaders($lines) {
+  $found = @()
+  for ($i = 0; $i -lt ($lines.Count - 1); $i++) {
+    if (-not (Test-TableSeparator $lines[$i + 1])) { continue }
+    $offsets = @(Get-HeaderCellOffsets $lines[$i])
+    if ($offsets.Count -lt 3) { continue }
+    # The separator must reach the Version column: a short stray line such
+    # as '---' under a data row is a row to skip, not a table boundary.
+    if (("$($lines[$i + 1])".Trim().Length) -lt $offsets[2]) { continue }
+    $second = "$($lines[$i])".Substring($offsets[1], $offsets[2] - $offsets[1]).Trim()
+    if ($second -ine 'Id') {
+      Write-Verbose ("winget: unexpected second header cell '{0}', parsing table positionally" -f $second)
+    }
+    $found += $i
+  }
+  return $found
+}
+
+function Remove-ProgressFrames($line) {
+  $text = "$line"
+  if ($text.Contains("`r")) {
+    $segments = $text -split "`r"
+    $text = ''
+    for ($k = $segments.Count - 1; $k -ge 0; $k--) {
+      if (-not [string]::IsNullOrWhiteSpace($segments[$k])) { $text = $segments[$k]; break }
+    }
+  }
+  return $text.TrimStart([char]0xFEFF)
+}
+
+function Get-VisibleLines($lines) {
+  $clean = @()
+  foreach ($raw in $lines) {
+    $line = Remove-ProgressFrames $raw
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    # A leading BOM would shift the first column.
+    $clean += $line.TrimStart([char]0xFEFF)
+  }
+  return $clean
+}
+
+function Get-ColumnOffsets($header) {
+  $offsets = @(Get-HeaderCellOffsets $header)
+  if ($offsets.Count -lt 3) { return $null }
+  return @{ Id = $offsets[1]; Version = $offsets[2] }
+}
+
+# Legacy single-line header predicate, kept for compatibility (the table
+# functions above recognize localized headers structurally instead, see
+# Find-TableHeaders): true when the line segments into at least three cells
+# whose second cell reads exactly 'Id'.
 function Test-TableHeader($line) {
-  if ($line -notmatch 'Id.*Version') { return $false }
-  $offsets = Get-ColumnOffsets $line
-  if (-not $offsets) { return $false }
-  $cell = $line.Substring($offsets.Id, $offsets.Version - $offsets.Id).Trim()
+  $offsets = @(Get-HeaderCellOffsets "$line")
+  if ($offsets.Count -lt 3) { return $false }
+  $cell = "$line".Substring($offsets[1], $offsets[2] - $offsets[1]).Trim()
   return $cell -ieq 'Id'
 }
 
@@ -88,17 +152,15 @@ function Get-UpgradableIds($winget) {
   $ids = @()
   $seen = @{}
   $lines = @(& $winget upgrade --accept-source-agreements --disable-interactivity 2>&1)
-  $headerIdx = @()
-  for ($i = 0; $i -lt $lines.Count; $i++) {
-    if (Test-TableHeader $lines[$i]) { $headerIdx += $i }
-  }
-  foreach ($h in $headerIdx) {
-    $offsets = Get-ColumnOffsets $lines[$h]
+  $clean = @(Get-VisibleLines $lines)
+  $headerIdx = @(Find-TableHeaders $clean)
+  for ($t = 0; $t -lt $headerIdx.Count; $t++) {
+    $h = $headerIdx[$t]
+    $tableEnd = if ($t + 1 -lt $headerIdx.Count) { $headerIdx[$t + 1] } else { $clean.Count }
+    $offsets = Get-ColumnOffsets $clean[$h]
     if (-not $offsets) { continue }
-    for ($j = $h + 2; $j -lt $lines.Count; $j++) {
-      $line = $lines[$j]
-      if ([string]::IsNullOrWhiteSpace($line)) { continue }
-      if (Test-TableHeader $line) { break }
+    for ($j = $h + 2; $j -lt $tableEnd; $j++) {
+      $line = $clean[$j]
       if ($line -match '^\s*[-=]+\s*$') { continue }
       if ($line.Length -lt $offsets.Version) { continue }
       $id = $line.Substring($offsets.Id, $offsets.Version - $offsets.Id).Trim()
@@ -116,17 +178,15 @@ function Get-PinnedIds($winget) {
   $ids = @()
   $lines = @(& $winget pin list --accept-source-agreements --disable-interactivity 2>&1)
   if ($LASTEXITCODE -ne 0) { return $ids }
-  $headerIdx = @()
-  for ($i = 0; $i -lt $lines.Count; $i++) {
-    if (Test-TableHeader $lines[$i]) { $headerIdx += $i }
-  }
-  foreach ($h in $headerIdx) {
-    $offsets = Get-ColumnOffsets $lines[$h]
+  $clean = @(Get-VisibleLines $lines)
+  $headerIdx = @(Find-TableHeaders $clean)
+  for ($t = 0; $t -lt $headerIdx.Count; $t++) {
+    $h = $headerIdx[$t]
+    $tableEnd = if ($t + 1 -lt $headerIdx.Count) { $headerIdx[$t + 1] } else { $clean.Count }
+    $offsets = Get-ColumnOffsets $clean[$h]
     if (-not $offsets) { continue }
-    for ($j = $h + 2; $j -lt $lines.Count; $j++) {
-      $line = $lines[$j]
-      if ([string]::IsNullOrWhiteSpace($line)) { continue }
-      if (Test-TableHeader $line) { break }
+    for ($j = $h + 2; $j -lt $tableEnd; $j++) {
+      $line = $clean[$j]
       if ($line -match '^\s*[-=]+\s*$') { continue }
       if ($line.Length -lt $offsets.Version) { continue }
       $id = $line.Substring($offsets.Id, $offsets.Version - $offsets.Id).Trim()
