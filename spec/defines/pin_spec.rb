@@ -29,6 +29,11 @@ describe 'winget::pin' do
       .with_unless(%r{pin list --id 'Google\.Chrome' --exact})
   end
 
+  it 'uses explicit exit codes in the pin list guard' do
+    is_expected.to contain_exec('winget-pin-add-Google.Chrome')
+      .with_unless(%r{if \(.*Select-String.*\) \{\s*exit 0\s*\} else \{\s*exit 1\s*\}})
+  end
+
   it 'adds a plain pin without version or blocking flags by default' do
     is_expected.to contain_exec('winget-pin-add-Google.Chrome')
       .with_command("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -Command \"& 'C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.8.2391_x64__8wekyb3d8bbwe/winget.exe' pin add --id 'Google.Chrome' --exact --accept-source-agreements --disable-interactivity\"")
@@ -66,6 +71,11 @@ describe 'winget::pin' do
         .with_command(%r{pin remove --id 'Google\.Chrome' --exact})
         .with_onlyif(%r{pin list --id 'Google\.Chrome' --exact})
       is_expected.not_to contain_exec('winget-pin-add-Google.Chrome')
+    end
+
+    it 'uses explicit exit codes in the pin list guard' do
+      is_expected.to contain_exec('winget-pin-remove-Google.Chrome')
+        .with_onlyif(%r{if \(.*Select-String.*\) \{\s*exit 0\s*\} else \{\s*exit 1\s*\}})
     end
   end
 

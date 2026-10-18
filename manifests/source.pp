@@ -53,9 +53,14 @@ define winget::source (
   $winget = $facts['winget_path']
 
   if $winget {
+    # Escape single quotes for PowerShell single-quoted literals.
+    $safe_title = regsubst($title, "'", "''", 'G')
+
     # A source table row starts with the source name: match it at line
-    # start followed by whitespace (the header row reads `Name ...`).
-    $listed_check = "${powershell} -NoProfile -Command \"& '${winget}' source list --disable-interactivity | Select-String -Quiet -Pattern '^${title}\\s'\""
+    # start followed by whitespace. Skip the header and separator rows so a
+    # source named `Name` does not match the header; [regex]::Escape quotes
+    # any regex metacharacters in the name.
+    $listed_check = "${powershell} -NoProfile -Command \"if (& '${winget}' source list --disable-interactivity | Select-Object -Skip 2 | Select-String -Quiet -Pattern ('^' + [regex]::Escape('${safe_title}') + '\\s')) { exit 0 } else { exit 1 }\""
 
     if $ensure == 'present' {
       if $url == undef {
@@ -96,14 +101,14 @@ define winget::source (
       }
 
       exec { "winget-source-add-${title}":
-        command     => "${powershell} -NoProfile -Command \"& '${winget}' source add --name '${title}' --arg '${url}'${type_flag}${trust_flag}${explicit_flag}${header_flag}${agreements_flag} --disable-interactivity\"",
+        command     => "${powershell} -NoProfile -Command \"& '${winget}' source add --name '${safe_title}' --arg '${url}'${type_flag}${trust_flag}${explicit_flag}${header_flag}${agreements_flag} --disable-interactivity\"",
         unless      => $listed_check,
         environment => $header_environment,
         timeout     => 300,
       }
     } else {
       exec { "winget-source-remove-${title}":
-        command => "${powershell} -NoProfile -Command \"& '${winget}' source remove --name '${title}' --disable-interactivity\"",
+        command => "${powershell} -NoProfile -Command \"& '${winget}' source remove --name '${safe_title}' --disable-interactivity\"",
         onlyif  => $listed_check,
         timeout => 300,
       }
