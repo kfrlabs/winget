@@ -1211,7 +1211,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
 
       it 'query reports hold when the package is pinned' do
-        allow(PuppetX::Winget::Runner).to receive(:run) do |cmd, **_kwargs|
+        allow(PuppetX::Winget::Runner).to receive(:run) do |cmd|
           if cmd.include?('pin')
             Puppet::Util::Execution::ProcessOutput.new(pin_output, 0)
           else
@@ -1222,7 +1222,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
 
       it 'query reports none when the package is not pinned' do
-        allow(PuppetX::Winget::Runner).to receive(:run) do |cmd, **_kwargs|
+        allow(PuppetX::Winget::Runner).to receive(:run) do |cmd|
           if cmd.include?('pin')
             Puppet::Util::Execution::ProcessOutput.new("No pins exist.\n", 0)
           else
