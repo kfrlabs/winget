@@ -30,6 +30,11 @@ describe 'winget::source' do
       .with_unless(%r{source list})
   end
 
+  it 'uses explicit exit codes in the source list guard' do
+    is_expected.to contain_exec('winget-source-add-contoso')
+      .with_unless(%r{if \(.*Select-String.*\) \{\s*exit 0\s*\} else \{\s*exit 1\s*\}})
+  end
+
   it 'accepts source agreements by default for non-interactive runs' do
     is_expected.to contain_exec('winget-source-add-contoso')
       .with_command(%r{--accept-source-agreements})
@@ -121,6 +126,11 @@ describe 'winget::source' do
         .with_command(%r{source remove --name 'contoso'})
         .with_onlyif(%r{source list})
       is_expected.not_to contain_exec('winget-source-add-contoso')
+    end
+
+    it 'uses explicit exit codes in the source list guard' do
+      is_expected.to contain_exec('winget-source-remove-contoso')
+        .with_onlyif(%r{if \(.*Select-String.*\) \{\s*exit 0\s*\} else \{\s*exit 1\s*\}})
     end
   end
 

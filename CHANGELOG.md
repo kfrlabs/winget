@@ -123,6 +123,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `winget::source`: the REST `header` is kept `Sensitive` all the way into
   the `exec` environment instead of being unwrapped into a plain array, so it
   is redacted from the catalog stored by PuppetDB and from reports
+- `winget::pin` and `winget::source`: wrap the `pin list` / `source list`
+  `Select-String -Quiet` guards in `if (...) { exit 0 } else { exit 1 }` so
+  the `unless` / `onlyif` exit code reflects the match instead of always
+  succeeding (the pipeline alone always exits 0)
 
 ## [1.0.0] - 2026-10-13
 

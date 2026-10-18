@@ -59,6 +59,9 @@ define winget::pin (
   $winget = $facts['winget_path']
 
   if $winget {
+    # Escape single quotes for PowerShell single-quoted literals.
+    $safe_title = regsubst($title, "'", "''", 'G')
+
     $version_flag = $version ? {
       undef   => '',
       default => " --version '${version}'",
@@ -72,17 +75,17 @@ define winget::pin (
       default => " --source '${source}'",
     }
 
-    $pinned_check = "${powershell} -NoProfile -Command \"& '${winget}' pin list --id '${title}' --exact --disable-interactivity | Select-String -Quiet -SimpleMatch '${title}'\""
+    $pinned_check = "${powershell} -NoProfile -Command \"if (& '${winget}' pin list --id '${safe_title}' --exact --disable-interactivity | Select-String -Quiet -SimpleMatch '${safe_title}') { exit 0 } else { exit 1 }\""
 
     if $ensure == 'present' {
       exec { "winget-pin-add-${title}":
-        command => "${powershell} -NoProfile -Command \"& '${winget}' pin add --id '${title}' --exact${version_flag}${blocking_flag}${source_flag} --accept-source-agreements --disable-interactivity\"",
+        command => "${powershell} -NoProfile -Command \"& '${winget}' pin add --id '${safe_title}' --exact${version_flag}${blocking_flag}${source_flag} --accept-source-agreements --disable-interactivity\"",
         unless  => $pinned_check,
         timeout => 300,
       }
     } else {
       exec { "winget-pin-remove-${title}":
-        command => "${powershell} -NoProfile -Command \"& '${winget}' pin remove --id '${title}' --exact --disable-interactivity\"",
+        command => "${powershell} -NoProfile -Command \"& '${winget}' pin remove --id '${safe_title}' --exact --disable-interactivity\"",
         onlyif  => $pinned_check,
         timeout => 300,
       }
