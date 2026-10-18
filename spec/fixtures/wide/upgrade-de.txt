@@ -1,0 +1,5 @@
+Name                    ID                            Version       Verfügbar     Quelle
+----------------------------------------------------------------------------------------
+日本語パッケージ                CJK.Package                   1.0           2.0           winget
+🎉 Party App             Emoji.Party                   3.0           4.0           winget
+2 Upgrades verfügbar.

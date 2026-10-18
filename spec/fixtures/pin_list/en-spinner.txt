@@ -1,0 +1,4 @@
+   -   |Name                    Id                            Version       Pin
+-----------------------------------------------------------------------
+Git                     Git.Git                       2.40.0        Pinning
+Google Chrome           Google.Chrome                 120.0         Blocking

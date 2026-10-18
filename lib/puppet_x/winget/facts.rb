@@ -20,9 +20,21 @@ module PuppetX
   module Winget
     # Facts resolves winget facts using the shared path resolver.
     class Facts
-      # Length of the literal 'Version' table header word, used in column
-      # offset math (a constant so the size is never recomputed).
+      # Length of the literal 'Version' table header word.
+      # @deprecated No longer used in offset math (offsets are positional
+      #   since locale-independent parsing); kept so existing references
+      #   keep working.
       VERSION_HEADER_LENGTH = 7
+      # A winget table separator row: the dashes/equals line under a
+      # header. Three characters minimum so short stray lines are not
+      # mistaken for table boundaries (row skipping still tolerates any
+      # length, see the parsers below).
+      SEPARATOR_RE = %r{\A\s*[-=]{3,}\s*\z}.freeze
+      # Header cells are segmented on 2+ spaces or tabs (the first cell
+      # is anchored at the line start). Data rows keep being sliced at
+      # the resulting offsets: winget may shrink inter-column gaps to a
+      # single space for long names, so rows must never be segmented.
+      HEADER_CELL_SPLIT_RE = %r{\s{2,}|\t+}.freeze
       class << self
         # Clear memoized command output (primarily for testing).
         def reset!
@@ -110,24 +122,35 @@ module PuppetX
         end
 
         # Parse `winget upgrade` table output into structured rows with the
-        # installed and available versions. Columns are sliced at the header
-        # offsets (fixed-width table) instead of split on whitespace: winget
+        # installed and available versions. Tables are discovered
+        # structurally (the separator row anchors the header above it) and
+        # columns are sliced positionally at the header cell offsets
+        # (fixed-width table) instead of split on whitespace: winget
         # shrinks the gap between two columns to a single space for long
         # names (truncated with `…`), so a whitespace split shifts every
         # column (the installed version is then read as the ID) or glues ID
-        # and version together (package skipped). The header match stays
-        # language-agnostic (Nom / Disponible on French systems). Rows
+        # and version together (package skipped). Header words are never
+        # matched to find a table, so localized headers (German `Quelle`,
+        # Spanish `Versión`, ...) parse like the English/French ones; the
+        # `Id` second cell is only a debug-level sanity check. Rows
         # shorter than the Version column (e.g. the "N upgrades available."
         # footer) are skipped: package IDs never contain spaces.
         # `winget upgrade` may print several tables (upgrades, then packages
         # requiring explicit targeting when some versions are unknown), each
-        # with its own header: every table is parsed with its own offsets so
-        # a later header's `Id` cell is never mistaken for a package ID.
-        # The Available column (English `Available`, French `Disponible`)
-        # holds versions as single tokens, so the available cell is read as
-        # the first token at its offset (the Source column may follow on the
-        # same row). Tables without an Available column yield rows with nil
-        # versions.
+        # with its own header: every table is parsed within its own bounds
+        # so a later header's cells are never mistaken for package IDs.
+        # The 4th column of a 5+-column upgrade table (English `Available`,
+        # French `Disponible`, ...) holds versions as single tokens, so the
+        # available cell is read as the first token at its offset (the
+        # Source column may follow on the same row). An exactly-4-column
+        # table only yields versions when its 4th cell reads as an
+        # Available word (see {.available_offset}); other 4-column tables
+        # yield rows with nil versions.
+        # Short rows are sliced leniently (Ruby slicing never raises): a
+        # row that ends inside the Available column still yields its
+        # current version with a nil available version. Deduplication is
+        # case-insensitive (first-seen casing wins); package IDs never
+        # contain spaces.
         # @param output [String, nil] Raw output from `winget upgrade`
         # @return [Array<Hash>] Deduplicated rows ('id', 'current_version', 'available_version')
         def parse_winget_upgrade(output)
@@ -137,26 +160,26 @@ module PuppetX
 
           lines = output_lines(output)
 
-          header_indices = lines.each_index.select { |i| table_header?(lines[i]) }
-          return rows if header_indices.empty?
+          headers = header_indices(lines)
+          return rows if headers.empty?
 
-          header_indices.each do |header_idx|
+          headers.each_with_index do |header_idx, pos|
+            table_end = headers[pos + 1] || lines.length
             id_start, version_start = column_offsets(lines[header_idx])
             next unless id_start && version_start
 
             available_start = available_offset(lines[header_idx], version_start)
-            data_lines = lines[(header_idx + 2)..] || []
+            data_lines = lines[(header_idx + 2)...table_end] || []
             data_lines.each do |line|
-              break if table_header?(line)
-              next if line.match?(%r{^[-=]+\s*$})
+              next if line.match?(%r{^\s*[-=]+\s*$})
               next if line.length < version_start
 
               id = line[id_start...version_start]&.strip
               next if id.nil? || id.empty?
               next if id.match?(%r{\s})
-              next if seen.include?(id)
+              next if seen.include?(id.downcase)
 
-              seen << id
+              seen << id.downcase
               current = nil
               available = nil
               if available_start
@@ -212,51 +235,117 @@ module PuppetX
         end
 
         # Parse `winget pin list` table output into pinned package IDs. Same
-        # fixed-width header-offset technique as the upgrade parser: the pin
-        # table carries extra trailing columns (pin type), but the Id cell is
-        # sliced between the Id and Version header offsets. Output without a
-        # recognizable table (e.g. "No pins exist") yields [].
+        # structural, positional technique as the upgrade parser (see
+        # {.header_indices}): the pin table carries extra trailing columns
+        # (pin type), but the Id cell is sliced between the Id and Version
+        # header offsets. Deduplication is case-insensitive (first-seen
+        # casing wins). Output without a recognizable table (e.g. "No
+        # pins exist") yields [].
         # @param output [String, nil] Raw output from `winget pin list`
         # @return [Array<String>] Deduplicated pinned package IDs
         def parse_pin_list(output)
           ids = []
+          seen = []
           return ids if output.nil? || output.empty?
 
           lines = output_lines(output)
 
-          header_indices = lines.each_index.select { |i| table_header?(lines[i]) }
-          return ids if header_indices.empty?
+          headers = header_indices(lines)
+          return ids if headers.empty?
 
-          header_indices.each do |header_idx|
+          headers.each_with_index do |header_idx, pos|
+            table_end = headers[pos + 1] || lines.length
             id_start, version_start = column_offsets(lines[header_idx])
             next unless id_start && version_start
 
-            data_lines = lines[(header_idx + 2)..] || []
+            data_lines = lines[(header_idx + 2)...table_end] || []
             data_lines.each do |line|
-              break if table_header?(line)
-              next if line.match?(%r{^[-=]+\s*$})
+              next if line.match?(%r{^\s*[-=]+\s*$})
               next if line.length < version_start
 
               id = line[id_start...version_start]&.strip
               next if id.nil? || id.empty?
               next if id.match?(%r{\s})
+              next if seen.include?(id.downcase)
 
-              ids << id unless ids.include?(id)
+              seen << id.downcase
+              ids << id
             end
           end
 
           ids
         end
 
+        # Parse `winget list` table output into a hash of package info.
+        # Shared with the provider so both agree on installed state (see
+        # `parse_winget_list` in lib/puppet/provider/package/winget.rb).
+        # A 5+-column table reads the version between the Version and 4th
+        # cell offsets and the source from the 5th cell; a 4-column table
+        # reads them from the 3rd/4th cells; fewer columns default the
+        # source to 'winget'.
+        # @param output [String, nil] Raw output from `winget list`
+        # @return [Hash{String => Hash}] Map of package id (lowercase) -> { name, version, source, id }
+        def parse_winget_list(output)
+          packages = {}
+          return packages if output.nil? || output.empty?
+
+          lines = output_lines(output)
+
+          headers = header_indices(lines)
+          return packages if headers.empty?
+
+          headers.each_with_index do |header_idx, pos|
+            table_end = headers[pos + 1] || lines.length
+            offsets = header_cell_offsets(lines[header_idx])
+            next if offsets.length < 3
+
+            id_start = offsets[1]
+            version_start = offsets[2]
+            data_lines = lines[(header_idx + 2)...table_end] || []
+            data_lines.each do |line|
+              next if line.match?(%r{^\s*[-=]+\s*$})
+              next if line.length < version_start
+
+              name = line[0...id_start]&.strip
+              id = line[id_start...version_start]&.strip
+              if offsets.length >= 5
+                version = line[version_start...offsets[3]]&.strip
+                source = line[offsets[4]..]&.strip
+              elsif offsets.length == 4
+                version = line[version_start...offsets[3]]&.strip
+                source = line[offsets[3]..]&.strip
+              else
+                version = line[version_start..]&.strip
+                source = nil
+              end
+              source = 'winget' if source.nil? || source.empty?
+
+              next if name.nil? || id.nil? || version.nil?
+              next if name.empty? || id.empty? || version.empty?
+              next if id.match?(%r{\s})
+
+              packages[id.downcase] = {
+                name: name,
+                version: version,
+                source: source,
+                id: id,
+              }
+            end
+          end
+
+          packages
+        end
+
         # Split raw winget output into non-blank lines, discarding the
         # progress spinner frames winget redraws with carriage returns
         # (`\r`). Only the text after the last carriage return of a line is
         # what ends up on screen, and it is the only text whose columns line
-        # up with the table header offsets.
+        # up with the table header offsets. A leading BOM is stripped so it
+        # never shifts the first column.
         # @param output [String, nil] Raw command output
         # @return [Array<String>] Non-blank lines without spinner frames
         def output_lines(output)
-          output.to_s.lines.map { |line| strip_progress(line.chomp) }.reject { |line| line.strip.empty? }
+          output.to_s.lines.map { |line| strip_progress(line.chomp).delete_prefix("\uFEFF") }.reject { |line| line.strip.empty? }
         end
 
         # Keep only the last visible segment of a line redrawn with `\r`.
@@ -268,45 +357,116 @@ module PuppetX
           line.split("\r").reverse.find { |segment| !segment.strip.empty? } || ''
         end
 
-        # Whether a line is a winget table header (and not a data row that
-        # merely mentions "Id" and "Version"): the Id column cell must read
-        # exactly `Id`.
+        # Whether a line is a winget table separator (the dashes/equals
+        # row under a header). Kept lenient on `=` (some outputs use it)
+        # but strict on length (see {SEPARATOR_RE}).
         # @param line [String] Candidate output line
-        # @return [Boolean] True when the line opens a result table
-        def table_header?(line)
-          return false unless line.match?(%r{Id.*Version}i)
-
-          id_start, version_start = column_offsets(line)
-          return false unless id_start && version_start
-
-          line[id_start...version_start]&.strip&.match?(%r{\AId\z}i) || false
+        # @return [Boolean] True when the line is a table separator row
+        def separator?(line)
+          line.match?(SEPARATOR_RE)
         end
 
-        # Locate the Id and Version column starts in a winget table header.
-        # @param header [String] Header line containing `Id` and `Version`
+        # Segment a header line into [text, offset] cells on 2+ spaces or
+        # tabs. The first cell is anchored at the line start (leading empty
+        # segments are skipped). Offsets count characters (Ruby strings):
+        # the PowerShell port counts UTF-16 code units instead, so a package
+        # name with astral-plane characters (e.g. emoji) before the Id
+        # column aligns here but may shift by one unit per character there
+        # (BMP-only assumption, see tasks/).
+        # @param header [String] Table header line
+        # @return [Array<Array(String, Integer)>] Cell text with its start offset
+        def header_cells(header)
+          cells = []
+          pos = 0
+          header.split(HEADER_CELL_SPLIT_RE).each do |text|
+            next if text.empty?
+
+            idx = header.index(text, pos)
+            break if idx.nil?
+
+            cells << [text, idx]
+            pos = idx + text.length
+          end
+          cells
+        end
+
+        # Start offsets of the header cells (see {.header_cells}).
+        # @param header [String] Table header line
+        # @return [Array<Integer>] Cell start offsets in column order
+        def header_cell_offsets(header)
+          header_cells(header).map { |(_text, idx)| idx }
+        end
+
+        # Indices of the table header lines: the visible line directly
+        # above a separator row with at least three cells
+        # ([Name, Id, Version, ...]). Positional and locale-independent:
+        # header words are never matched to find a table. A second cell
+        # other than `Id` only logs a debug-level sanity note, it never
+        # rejects the table. The separator must reach the Version column:
+        # a short stray line such as `---` under a data row is a row to
+        # skip, not a table boundary (the row above it would otherwise
+        # shadow the real table as a false header).
+        # @param lines [Array<String>] Visible output lines (see {.output_lines})
+        # @return [Array<Integer>] Header line indices in table order
+        def header_indices(lines)
+          indices = []
+          lines.each_index do |i|
+            next if i + 1 >= lines.length
+            next unless separator?(lines[i + 1])
+
+            cells = header_cells(lines[i])
+            next if cells.length < 3
+            next if lines[i + 1].strip.length < cells[2][1]
+
+            unless cells[1][0].match?(%r{\AId\z}i)
+              Puppet.debug("winget: unexpected second header cell #{cells[1][0].inspect}, parsing table positionally") if defined?(Puppet)
+            end
+            indices << i
+          end
+          indices
+        end
+
+        # @deprecated Prefer separator-anchored discovery via
+        #   {.header_indices}. Kept (structurally, same callers) for
+        #   compatibility: true when the line segments into at least three
+        #   cells whose second cell reads exactly `Id`.
+        # @param line [String] Candidate output line
+        # @return [Boolean] True when the line looks like a result table header
+        def table_header?(line)
+          cells = header_cells(line)
+          cells.length >= 3 && cells[1][0].match?(%r{\AId\z}i)
+        end
+
+        # Locate the Id and Version column starts positionally: the 2nd
+        # and 3rd header cells ([Name, Id, Version, ...]), whatever words
+        # the locale uses.
+        # @param header [String] Table header line
         # @return [Array<(Integer, nil)>] Id/Version offsets, nils when absent
         def column_offsets(header)
-          id_start = header.index(%r{\bId\b}i)
-          version_start = header.index(%r{\bVersion\b}i)
-          return [nil, nil] unless id_start && version_start && version_start > id_start
+          offsets = header_cell_offsets(header)
+          return [nil, nil] if offsets.length < 3
 
-          [id_start, version_start]
+          [offsets[1], offsets[2]]
         end
 
-        # Locate the Available column start in a `winget upgrade` table
-        # header (English `Available`, French `Disponible`), searched after
-        # the Version column.
+        # Locate the Available column start positionally: the 4th header
+        # cell of a 5+-column table (a column such as Source follows it).
+        # An exactly-4-column table ([Name, Id, Version, X]) only carries
+        # versions when X reads as an Available word (English `Available`,
+        # French `Disponible`); otherwise (e.g. Source) it has no Available
+        # column. Other locales' 4-column Available words are not matched:
+        # real `winget upgrade` tables always carry Source, so that shape
+        # is theoretical and stays positional-only.
         # @param header [String] Header line of a `winget upgrade` table
-        # @param version_start [Integer] Offset of the Version column
+        # @param _version_start [Integer, nil] Unused; kept so the
+        #   two-argument call form keeps working (frozen signature)
         # @return [Integer, nil] Offset of the Available column, nil when absent
-        def available_offset(header, version_start)
-          tail = header[version_start + VERSION_HEADER_LENGTH..]
-          return nil unless tail
+        def available_offset(header, _version_start = nil)
+          cells = header_cells(header)
+          return nil if cells.length < 4
+          return cells[3][1] if cells.length >= 5
 
-          match = tail.match(%r{\b(Available|Disponible)\b}i)
-          return nil unless match
-
-          version_start + VERSION_HEADER_LENGTH + match.begin(0)
+          cells[3][0].strip.match?(%r{\b(Available|Disponible)\b}i) ? cells[3][1] : nil
         end
       end
     end

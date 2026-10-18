@@ -1,0 +1,5 @@
+Nome                    Id                            Versione      Disponibile   Origine
+-----------------------------------------------------------------------------------------
+Git                     Git.Git                       2.40.0        2.41.0        winget
+Notepad++               Notepad++.Notepad++           8.5.4         8.6.0         winget
+2 aggiornamenti disponibili.

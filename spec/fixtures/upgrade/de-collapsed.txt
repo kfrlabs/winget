@@ -1,0 +1,5 @@
+Name                                                ID                             Version       Verfügbar     Quelle
+---------------------------------------------------------------------------------------------------------------------
+Microsoft ASP.NET Core 6.0.35 - Shared Framework X… Microsoft.DotNet.AspNetCore.6  6.0.35        6.0.36        winget
+Git                                                 Git.Git                        2.40.0        2.41.0        winget
+2 Upgrades verfügbar.

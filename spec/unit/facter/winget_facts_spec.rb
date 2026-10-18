@@ -444,6 +444,211 @@ RSpec.describe PuppetX::Winget::Facts do
     it 'leaves lines without carriage returns untouched' do
       expect(described_class.output_lines("a b  c\nd\n")).to eq(['a b  c', 'd'])
     end
+
+    it 'strips a leading BOM so the first column stays aligned' do
+      expect(described_class.output_lines("\uFEFFName  Id\n")).to eq(['Name  Id'])
+    end
+
+    it 'strips a BOM carried by the last spinner segment' do
+      expect(described_class.output_lines("\r-\r\uFEFFName  Id\n")).to eq(['Name  Id'])
+    end
+  end
+
+  describe '.header_indices' do
+    it 'anchors the header on the separator row, whatever words it uses' do
+      lines = [
+        'Nombre                  Id                            Versión       Disponible    Origen',
+        '----------------------------------------------------------------------------------------',
+        'Git                     Git.Git                       2.40.0        2.41.0        winget',
+      ]
+      expect(described_class.header_indices(lines)).to eq([0])
+    end
+
+    it 'ignores short stray separator-like lines without a 3-cell header above' do
+      expect(described_class.header_indices(['some output', '---'])).to eq([])
+    end
+
+    it 'does not mistake a data row above a short stray line for a header' do
+      lines = [
+        'Name                  Id                   Version     Source',
+        '================================================================',
+        'Git                   Git.Git              2.40.0      winget',
+        '---',
+      ]
+      expect(described_class.header_indices(lines)).to eq([0])
+    end
+
+    it 'finds every table of a multi-table output' do
+      lines = [
+        'Name  Id  Version  Available  Source',
+        '------------------------------------',
+        'Git   Git.Git  2.40.0  2.41.0  winget',
+        'explicit targeting:',
+        'Name  Id  Version  Available  Source',
+        '------------------------------------',
+        'Foo   Foo.Foo  1.0  2.0  winget',
+      ]
+      expect(described_class.header_indices(lines)).to eq([0, 4])
+    end
+  end
+
+  describe '.column_offsets and .available_offset' do
+    it 'maps Id/Version positionally without matching header words' do
+      header = 'Nombre                  Id                            Versión       Disponible    Origen'
+      id_start, version_start = described_class.column_offsets(header)
+      expect(header[id_start...(id_start + 2)]).to eq('Id')
+      expect(header[version_start...(version_start + 7)]).to eq('Versión')
+    end
+
+    it 'returns nils when the header has fewer than three cells' do
+      expect(described_class.column_offsets('just one column')).to eq([nil, nil])
+    end
+
+    it 'reads the Available column as the 4th cell of a 5-column table' do
+      header = 'Nome  Id  Versione  Disponibile  Origine'
+      id_start, version_start = described_class.column_offsets(header)
+      available_start = described_class.available_offset(header, version_start)
+      expect(header[available_start...(available_start + 11)]).to eq('Disponibile')
+      expect(available_start).to be > version_start
+      expect(id_start).to be < version_start
+    end
+
+    it 'returns nil for a 4-column table without an Available column' do
+      header = 'Name  Id  Version  Source'
+      _id_start, version_start = described_class.column_offsets(header)
+      expect(described_class.available_offset(header, version_start)).to be_nil
+    end
+
+    it 'reads the Available column of a 4-column table when named as such' do
+      header = 'Name  Id  Version  Available'
+      _id_start, version_start = described_class.column_offsets(header)
+      available_start = described_class.available_offset(header, version_start)
+      expect(header[available_start...(available_start + 9)]).to eq('Available')
+    end
+  end
+
+  describe '.table_header?' do
+    it 'is true for English and localized headers alike' do
+      expect(described_class.table_header?('Name  Id  Version  Available  Source')).to be true
+      expect(described_class.table_header?('Nombre  Id  Versión  Disponible  Origen')).to be true
+    end
+
+    it 'is false for data rows and separator lines' do
+      expect(described_class.table_header?('Git   Git.Git  2.40.0  2.41.0  winget')).to be false
+      expect(described_class.table_header?('----------------------------------------------------------------')).to be false
+    end
+  end
+
+  describe 'structural edge cases' do
+    it 'reads the current version of a row that ends inside the Available column' do
+      output = <<~OUTPUT
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0
+      OUTPUT
+      expect(described_class.parse_winget_upgrade(output)).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => nil },
+      ])
+    end
+
+    it 'deduplicates case-insensitively across tables, first-seen casing wins' do
+      output = <<~OUTPUT
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+        The following packages have an upgrade available, but require explicit targeting:
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               git.git                 2.40.0    2.41.0      winget
+        Foo               Foo.Foo                 1.0       2.0         winget
+      OUTPUT
+      expect(described_class.parse_winget_upgrade(output)).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+        { 'id' => 'Foo.Foo', 'current_version' => '1.0', 'available_version' => '2.0' },
+      ])
+    end
+
+    it 'deduplicates pinned IDs case-insensitively, first-seen casing wins' do
+      output = <<~OUTPUT
+        Name              Id                      Version   Pin
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    Pinning
+        Git               GIT.GIT                 2.40.0    Pinning
+      OUTPUT
+      expect(described_class.parse_pin_list(output)).to eq(['Git.Git'])
+    end
+
+    it 'skips indented separator-like rows' do
+      output = <<~OUTPUT
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+           ---
+           ===
+      OUTPUT
+      expect(described_class.parse_winget_upgrade(output)).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+      ])
+    end
+  end
+
+  describe 'localized table fixtures (structural simulations, see spec/fixtures/README.md)' do
+    let(:fixtures_root) { File.expand_path('../../fixtures', __dir__) }
+    let(:upgrade_rows) do
+      [
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+        { 'id' => 'Notepad++.Notepad++', 'current_version' => '8.5.4', 'available_version' => '8.6.0' },
+      ]
+    end
+
+    it 'parses every standard upgrade fixture, whatever language the header uses' do
+      # en-no-source (4-column Available fallback) and de-collapsed
+      # (single-space data rows) carry different rows; covered below.
+      Dir[File.join(fixtures_root, 'upgrade', '*.txt')].sort.each do |path|
+        next if %w[en-no-source.txt de-collapsed.txt].include?(File.basename(path))
+
+        output = File.read(path, encoding: 'UTF-8')
+        expect(described_class.parse_winget_upgrade(output)).to eq(upgrade_rows), "expected #{path} to parse"
+      end
+    end
+
+    it 'reads versions from a 4-column upgrade table with an Available column' do
+      output = File.read(File.join(fixtures_root, 'upgrade', 'en-no-source.txt'), encoding: 'UTF-8')
+      expect(described_class.parse_winget_upgrade(output)).to eq(upgrade_rows)
+    end
+
+    it 'parses collapsed single-space data rows under a localized header' do
+      output = File.read(File.join(fixtures_root, 'upgrade', 'de-collapsed.txt'), encoding: 'UTF-8')
+      expect(described_class.parse_winget_upgrade(output)).to eq([
+        { 'id' => 'Microsoft.DotNet.AspNetCore.6', 'current_version' => '6.0.35', 'available_version' => '6.0.36' },
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+      ])
+    end
+
+    it 'parses wide characters under a localized header' do
+      output = File.read(File.join(fixtures_root, 'wide', 'upgrade-de.txt'), encoding: 'UTF-8')
+      expect(described_class.parse_winget_upgrade(output)).to eq([
+        { 'id' => 'CJK.Package', 'current_version' => '1.0', 'available_version' => '2.0' },
+        { 'id' => 'Emoji.Party', 'current_version' => '3.0', 'available_version' => '4.0' },
+      ])
+    end
+
+    it 'parses every pin list fixture, whatever language the header uses' do
+      Dir[File.join(fixtures_root, 'pin_list', '*.txt')].sort.each do |path|
+        output = File.read(path, encoding: 'UTF-8')
+        expect(described_class.parse_pin_list(output)).to eq(['Git.Git', 'Google.Chrome']), "expected #{path} to parse"
+      end
+    end
+
+    it 'parses every list fixture through the shared list parser' do
+      Dir[File.join(fixtures_root, 'list', '*.txt')].sort.each do |path|
+        output = File.read(path, encoding: 'UTF-8')
+        result = described_class.parse_winget_list(output)
+        expect(result.keys).to contain_exactly('git.git', 'notepad++.notepad++'), "expected #{path} to parse"
+        expect(result['git.git'][:version]).to eq('2.40.0')
+        expect(result['notepad++.notepad++'][:version]).to eq('8.5.4')
+      end
+    end
   end
 
   describe '.winget_upgrades with execution contexts' do

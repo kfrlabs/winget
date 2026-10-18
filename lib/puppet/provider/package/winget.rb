@@ -204,61 +204,13 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
   # Parse winget list output into a hash of package info
   # winget list output is localized, may have spinners, truncated columns, unicode
-  # We parse the table format, skipping header/separator lines.
-  # Columns are sliced at the header offsets (fixed-width table) instead of
-  # split on whitespace: winget shrinks the gap between two columns to a
-  # single space for long names (truncated with `…`), which shifts a
-  # whitespace split and corrupts every field after the name.
+  # Tables are discovered structurally and sliced positionally via the shared
+  # facts helper, so localized headers parse like the English/French ones.
   # @param output [String] Raw output from `winget list`
   # @return [Hash{String => Hash}] Map of package id (lowercase) -> { name, version, source, id }
   def parse_winget_list(output)
-    packages = {}
-    return packages if output.nil? || output.empty?
-
-    # Drop spinner frames (`\r` redraws): they precede the header on the
-    # same line and would shift every column offset.
     require 'puppet_x/winget/facts'
-    lines = PuppetX::Winget::Facts.output_lines(output)
-
-    # Find the header line (contains "Id" and "Version" - Name might be localized)
-    header_idx = lines.find_index { |line| line.match?(%r{Id.*Version}i) }
-    return packages unless header_idx
-
-    header = lines[header_idx]
-    id_start = header.index(%r{\bId\b}i)
-    version_start = header.index(%r{\bVersion\b}i)
-    return packages unless id_start && version_start && version_start > id_start
-
-    source_match = header.match(%r{\S+}, version_start + 'Version'.length)
-    source_start = source_match&.begin(0)
-
-    # Data starts after header and separator line
-    data_lines = lines[(header_idx + 2)..] || []
-
-    data_lines.each do |line|
-      # Skip separator lines (--- or ===)
-      next if line.match?(%r{^[-=]+\s*$})
-      next if line.length < version_start
-
-      name = line[0...id_start]&.strip
-      id = line[id_start...version_start]&.strip
-      version = source_start ? line[version_start...source_start]&.strip : line[version_start..]&.strip
-      source = source_start ? line[source_start..]&.strip : nil
-      source = 'winget' if source.nil? || source.empty?
-
-      next if name.nil? || id.nil? || version.nil?
-      next if name.empty? || id.empty? || version.empty?
-      next if id.match?(%r{\s})
-
-      packages[id.downcase] = {
-        name: name,
-        version: version,
-        source: source,
-        id: id
-      }
-    end
-
-    packages
+    PuppetX::Winget::Facts.parse_winget_list(output)
   end
 
   # Query the current state of the package.

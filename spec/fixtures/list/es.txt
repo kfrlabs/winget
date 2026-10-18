@@ -1,0 +1,4 @@
+Nombre                  Id                            Versión       Origen
+--------------------------------------------------------------------------
+Git                     Git.Git                       2.40.0        winget
+Notepad++               Notepad++.Notepad++           8.5.4         winget
