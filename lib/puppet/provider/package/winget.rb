@@ -429,12 +429,15 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   # Move an installed package to another pinned version. A newer version is
   # a regular `winget upgrade --version`; winget cannot downgrade in place,
   # so an older plain-numeric version is installed after removing the
-  # current one. Non-plain versions (suffixes like `.windows.1`, `-rc1`,
-  # leading `v`) never trigger the destructive uninstall: Gem treats
-  # suffixed versions as pre-releases, so a suffix change is not a real
-  # downgrade and uninstalling would risk data loss for no benefit. Those
-  # fall back to `install --version` (previous behaviour, idempotent when
-  # winget reports "another version is installed").
+  # current one, but only when the downgrade is explicitly opted in via
+  # `install_options` (see `allow_downgrade?`). Without opt-in the change
+  # falls back to `install --version` (previous behaviour, idempotent when
+  # winget reports "another version is installed"). Non-plain versions
+  # (suffixes like `.windows.1`, `-rc1`, leading `v`) never trigger the
+  # destructive uninstall: Gem treats suffixed versions as pre-releases, so
+  # a suffix change is not a real downgrade and uninstalling would risk
+  # data loss for no benefit. Those fall back to `install --version` too.
+  # `ensure => latest` never downgrades: it goes through `update`, not here.
   # @param wanted [String] Pinned version from `ensure`
   # @param current [String] Installed version
   def change_version(wanted, current)
@@ -445,9 +448,20 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
       handle_exit_code(output, 'upgrade')
       refresh_after_change
     elsif plain_downgrade?(wanted, current)
-      Puppet.notice("winget: downgrading #{resource[:name]} from #{current} to #{wanted} (uninstall, then install)")
-      uninstall
-      perform_install(wanted)
+      if allow_downgrade?
+        Puppet.notice("winget: downgrading #{resource[:name]} from #{current} to #{wanted} (uninstall, then install)")
+        uninstall
+        begin
+          perform_install(wanted)
+        rescue Puppet::Error => e
+          raise Puppet::Error, _('winget downgrade failed: package %{name} was uninstalled but reinstalling %{version} failed and the package is left without a usable install: %{error}') % {
+            name: resource[:name], version: wanted, error: e.message,
+          }
+        end
+      else
+        Puppet.notice("winget: not downgrading #{resource[:name]} from #{current} to #{wanted} without opt-in (install_options allow_downgrade), falling back to install --version")
+        perform_install(wanted)
+      end
     else
       Puppet.notice("winget: not uninstalling #{resource[:name]} to move from #{current} to #{wanted} (non-plain version, falling back to install --version)")
       perform_install(wanted)
@@ -530,7 +544,9 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
   # Source selection followed by the extra `install_options`, shared by
   # install, upgrade and version changes. Hash/`--source` entries are
-  # skipped: the source is emitted once, first.
+  # skipped: the source is emitted once, first. The `allow_downgrade`
+  # opt-in marker (see `allow_downgrade?`) is stripped too: it must never
+  # reach the winget CLI.
   # @return [Array] Arguments to append after `--id <name>`
   def install_option_args
     args = []
@@ -540,6 +556,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     extra_args = resource[:install_options]
     if extra_args.is_a?(Array)
       extra_args.each_with_index do |opt, i|
+        next if downgrade_marker?(opt)
         next if opt.is_a?(Hash) && (opt.key?(:source) || opt.key?('source'))
         next if opt.is_a?(String) && opt.match?(%r{^--source([= ].*)?$})
         next if i.positive? && extra_args[i - 1] == '--source'
@@ -610,6 +627,48 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     Gem::Version.new(wanted) < Gem::Version.new(current)
   rescue ArgumentError
     false
+  end
+
+  # Whether the resource opts in to the destructive uninstall-then-install
+  # downgrade. The canonical marker transport is `install_options`: the
+  # string flag `--allow-downgrade` (any letter case, surrounding
+  # whitespace ignored). Hash entries with an `allow_downgrade` key
+  # (symbol or string key, any letter case) are also honoured defensively
+  # on the provider side, but they cannot be declared through the
+  # `package` type: its `install_options` munging only accepts String
+  # hash values, so only the string flag survives catalog compilation.
+  # Anything else (absent, false, other values) means no opt-in: a plain
+  # downgrade falls back to `install --version` with a notice.
+  # @return [Boolean]
+  def allow_downgrade?
+    opts = resource[:install_options]
+    return false unless opts.is_a?(Array)
+
+    opts.any? do |opt|
+      case opt
+      when Hash
+        opt.any? { |k, v| k.to_s.casecmp('allow_downgrade').zero? && (v == true || (v.is_a?(String) && v.strip.casecmp('true').zero?)) }
+      when String
+        opt.strip.casecmp('--allow-downgrade').zero?
+      else
+        false
+      end
+    end
+  end
+
+  # Whether an `install_options` entry is the downgrade opt-in marker (any
+  # accepted form: the canonical string flag, or a legacy hash entry
+  # honoured defensively). Markers are stripped before calling winget.
+  # @return [Boolean]
+  def downgrade_marker?(opt)
+    case opt
+    when Hash
+      opt.keys.any? { |k| k.to_s.casecmp('allow_downgrade').zero? }
+    when String
+      opt.strip.casecmp('--allow-downgrade').zero?
+    else
+      false
+    end
   end
 
   # Extract source from install_options hash/array

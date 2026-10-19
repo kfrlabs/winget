@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Pinned-version downgrade opt-in (issue #34): per-package
+  `allow_downgrade` (`Winget::Package` key, translated by
+  `winget::packages` into the `install_options` string flag
+  `'--allow-downgrade'`, any letter case, stripped before the winget
+  CLI) and raw `package` `install_options` string flag
+  `'--allow-downgrade'` (legacy hash entries such as
+  `{ 'allow_downgrade' => true }` are still tolerated defensively by the
+  provider but cannot pass `package` type munging, so declare the string
+  flag). Only a plain-numeric
+  older pin with the opt-in uninstalls then installs; without it the
+  provider falls back to `install --version` with a notice, and a
+  failed reinstall raises stating the package was uninstalled and left
+  without a usable install
 - Class `winget::packages`: declares one `package` (winget provider) per
   entry of a Hiera-friendly `Winget::PackagesHash` hash (shorthand ensure
   strings or full `Winget::Package` hashes), with structured install
@@ -143,6 +156,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on expiry). Defaults are 120 s for read-only commands and 600 s for
   `install`/`upgrade`/`uninstall`, overridable with `WINGET_COMMAND_TIMEOUT`.
   The provider raises `Puppet::Error` on timeout, facts return `nil`/`[]`
+- Pinned-version downgrade now requires an explicit per-package opt-in
+  (issue #34): an older plain-numeric pin without the
+  `install_options` `'--allow-downgrade'` flag falls back to
+  `install --version` with a notice instead of uninstalling; suffixed
+  versions never uninstall even with the opt-in
 - Pinned-version downgrade no longer uninstalls on suffixed versions
   (issue #34): only a plain-numeric (`x.y.z`) wanted version lower than a
   plain-numeric installed version triggers uninstall-then-install; anything

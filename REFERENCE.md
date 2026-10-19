@@ -29,7 +29,9 @@ optional. `ensure`, `install_options`, `uninstall_options` and `schedule`
 map to `package` resource attributes; `source`, `scope`, `architecture`,
 `location`, `override`, `installer_type` and `locale` are translated into
 `winget install`/`winget upgrade` flags; `hold` maps to the `mark`
-property (`winget pin add` / `winget pin remove`).
+property (`winget pin add` / `winget pin remove`); `allow_downgrade`
+opts a pinned version in to the destructive uninstall-then-install
+downgrade (provider strips the marker before calling winget).
 * [`Winget::PackagesHash`](#Winget--PackagesHash): Hash of winget packages for `winget::packages`.
 Keys are winget package IDs. Values are either a shorthand ensure string
 (`'installed'`, `'latest'`, `'2.40.0'`, `'absent'`, ...) or a full
@@ -332,6 +334,14 @@ a shorthand ensure string or a full `Winget::Package` hash:
   `winget upgrade` flags (appended before any extra `install_options`).
 - `hold` maps to the `mark` property, i.e. `winget pin add/remove` via the
   provider `holdable` feature (see `winget::pin` for blocking/gating pins).
+- `allow_downgrade` opts a pinned version in to the destructive
+  uninstall-then-install downgrade: `true` appends the string flag
+  `'--allow-downgrade'` to `install_options` (stripped by the provider
+  before calling winget; a string is required because the package type
+  munges `install_options` hashes to String values only). Default/undef/false means no downgrade: an
+  older plain-numeric pin falls back to `install --version` with a
+  notice. Only pinned versions can downgrade (`ensure => latest` never
+  does); suffixed versions never uninstall even with the opt-in.
 
 A package already declared elsewhere in the catalog (e.g. `package {
 'Git.Git': ensure => present }`) is left alone: redeclaring it would be a
@@ -1263,7 +1273,9 @@ optional. `ensure`, `install_options`, `uninstall_options` and `schedule`
 map to `package` resource attributes; `source`, `scope`, `architecture`,
 `location`, `override`, `installer_type` and `locale` are translated into
 `winget install`/`winget upgrade` flags; `hold` maps to the `mark`
-property (`winget pin add` / `winget pin remove`).
+property (`winget pin add` / `winget pin remove`); `allow_downgrade`
+opts a pinned version in to the destructive uninstall-then-install
+downgrade (provider strips the marker before calling winget).
 
 Alias of
 
@@ -1278,6 +1290,7 @@ Struct[{
   Optional['installer_type']    => String[1],
   Optional['locale']            => String[1],
   Optional['hold']              => Boolean,
+  Optional['allow_downgrade']     => Boolean,
   Optional['install_options']   => Array,
   Optional['uninstall_options'] => Array,
   Optional['schedule']          => String[1],

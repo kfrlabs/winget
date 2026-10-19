@@ -93,11 +93,61 @@ package { 'Git.Git':
 ```
 
 A newer pin runs `winget upgrade --version`. Moving to an older
-plain-numeric version (`2.40.0` -> `2.39.0`) uninstalls then installs
-(winget cannot downgrade in place): this is destructive (user data may be
-lost, the app is stopped) and not atomic, so only plain `x.y.z` versions
-trigger it. Suffixed versions (`2.40.0.windows.1`, `1.0.0-rc1`, `v1.2`)
-never uninstall: they fall back to `install --version` with a notice.
+plain-numeric version (`2.40.0` -> `2.39.0`) needs an explicit opt-in:
+without it the provider falls back to `install --version` with a notice
+(previous behaviour, idempotent when winget reports "another version is
+installed") and never uninstalls. With the opt-in, winget cannot
+downgrade in place, so the provider uninstalls then installs. The raw
+`package` opt-in is an `install_options` string flag (stripped before
+the winget CLI runs; a string is required because the `package` type
+munges `install_options` hashes to String values only):
+
+```puppet
+package { 'Git.Git':
+  ensure          => '2.39.0',
+  provider        => winget,
+  install_options => ['--allow-downgrade'],
+}
+```
+
+The same opt-in from Hiera (`winget::packages` / `winget::packages::entries`),
+where the marker is added for you:
+
+```yaml
+# hiera.yaml
+winget::packages:
+  Git.Git:
+    ensure: '2.39.0'
+    scope: machine
+    allow_downgrade: true
+```
+
+The marker is the string flag `'--allow-downgrade'` (any letter case);
+default (absent/false) is no downgrade. The provider still tolerates
+legacy hash entries (`{ 'allow_downgrade' => true }`, symbol key
+`:allow_downgrade`, string `'true'`) defensively, but those cannot pass
+`package` type munging, so declare the string flag. `ensure => latest`
+never downgrades.
+
+Downgrading is destructive and non-atomic: the app is stopped and removed
+first (user data may be lost, services interrupted), and if the reinstall
+fails the provider raises an error stating the package was uninstalled and
+left without a usable install. Only enable it for packages you can afford
+to reinstall from scratch.
+
+Even with the opt-in, only plain `x.y.z` versions downgrade. Suffixed
+versions never uninstall: a suffix change is not a real downgrade (Gem
+treats suffixed versions as pre-releases), so uninstalling would risk data
+loss for no benefit: the provider runs `install --version` or
+`upgrade --version` without ever uninstalling:
+
+| Wanted | Installed | Result (even with opt-in) |
+| --- | --- | --- |
+| `2.40.0.windows.1` | `2.40.0` | `install --version`, no uninstall |
+| `2.40.0` | `2.40.0.windows.1` | `upgrade --version`, no uninstall |
+| `2.40` | `2.40.windows.1` | `upgrade --version`, no uninstall |
+| `1.0.0-rc1` | `1.0.0` | `install --version`, no uninstall |
+| `v1.2` | `1.1` | `upgrade --version`, no uninstall |
 
 #### Latest Version (Upgrade)
 

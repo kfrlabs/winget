@@ -351,7 +351,14 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
 
       context 'when the pinned version is older' do
-        let(:resource) { Puppet::Type.type(:package).new(name: 'Git.Git', ensure: '2.39.0', provider: :winget) }
+        let(:resource) do
+          Puppet::Type.type(:package).new(
+            name: 'Git.Git',
+            ensure: '2.39.0',
+            provider: :winget,
+            install_options: ['--allow-downgrade']
+          )
+        end
 
         it 'uninstalls, then installs the pinned version' do
           expect(provider).to receive(:winget_exec).with('uninstall', '--id', 'Git.Git').ordered.and_return(ok)
@@ -419,6 +426,139 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
           expect(prov).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git', '--version', 'v1.2').and_return(ok)
           expect(prov).not_to receive(:uninstall)
           prov.install
+        end
+      end
+
+      context 'with the allow_downgrade opt-in (issue #34)' do
+        let(:ok) { Puppet::Util::Execution::ProcessOutput.new('', 0) }
+
+        def downgrade_provider(wanted, installed, install_options)
+          allow(described_class).to receive(:instances_list).and_return(
+            'git.git' => { name: 'Git', version: installed, source: 'winget', id: 'Git.Git' },
+          )
+          resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: wanted, provider: :winget)
+          resource[:install_options] = install_options unless install_options.nil?
+          described_class.new(resource)
+        end
+
+        it 'upgrades a newer plain pin (2.41 vs 2.40) without uninstalling' do
+          prov = downgrade_provider('2.41', '2.40', nil)
+          expect(prov).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git', '--version', '2.41').and_return(ok)
+          expect(prov).not_to receive(:uninstall)
+          prov.install
+        end
+
+        it 'downgrades a plain pin with opt-in (2.39 vs 2.40) via uninstall then install' do
+          prov = downgrade_provider('2.39', '2.40', ['--allow-downgrade'])
+          expect(prov).to receive(:winget_exec).with('uninstall', '--id', 'Git.Git').ordered.and_return(ok)
+          expect(prov).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--version', '2.39').ordered.and_return(ok)
+          allow(Puppet).to receive(:notice)
+          prov.install
+          expect(Puppet).to have_received(:notice).with(%r{downgrading Git\.Git from 2\.40 to 2\.39})
+        end
+
+        it 'never uninstalls a suffixed wanted version even with opt-in (2.40.0.windows.1 vs 2.40.0)' do
+          prov = downgrade_provider('2.40.0.windows.1', '2.40.0', ['--allow-downgrade'])
+          expect(prov).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--version', '2.40.0.windows.1').and_return(ok)
+          expect(prov).not_to receive(:uninstall)
+          allow(Puppet).to receive(:notice)
+          prov.install
+        end
+
+        it 'upgrades when the installed version has a suffix (2.40 vs 2.40.windows.1) without uninstalling' do
+          prov = downgrade_provider('2.40', '2.40.windows.1', ['--allow-downgrade'])
+          expect(prov).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git', '--version', '2.40').and_return(ok)
+          expect(prov).not_to receive(:uninstall)
+          allow(Puppet).to receive(:notice)
+          prov.install
+        end
+
+        it 'never uninstalls a release-candidate pin (1.0.0-rc1 vs 1.0.0)' do
+          prov = downgrade_provider('1.0.0-rc1', '1.0.0', ['--allow-downgrade'])
+          expect(prov).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--version', '1.0.0-rc1').and_return(ok)
+          expect(prov).not_to receive(:uninstall)
+          allow(Puppet).to receive(:notice)
+          prov.install
+        end
+
+        it 'falls back for a v-prefixed pin (v1.2 vs 1.1) without uninstalling' do
+          prov = downgrade_provider('v1.2', '1.1', ['--allow-downgrade'])
+          expect(prov).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git', '--version', 'v1.2').and_return(ok)
+          expect(prov).not_to receive(:uninstall)
+          prov.install
+        end
+
+        it 'plain downgrade without the marker falls back to install without uninstalling' do
+          prov = downgrade_provider('2.39', '2.40', nil)
+          expect(prov).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--version', '2.39').and_return(ok)
+          expect(prov).not_to receive(:uninstall)
+          allow(Puppet).to receive(:notice)
+          prov.install
+          expect(Puppet).to have_received(:notice).with(%r{not downgrading Git\.Git from 2\.40 to 2\.39})
+        end
+
+        it 'treats an explicit false hash marker as no opt-in (provider side only, never through catalog munging)' do
+          resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: '2.39', provider: :winget)
+          allow(resource).to receive(:[]).and_call_original
+          allow(resource).to receive(:[]).with(:install_options).and_return([{ 'allow_downgrade' => false }])
+          prov = described_class.new(resource)
+          expect(prov.send(:allow_downgrade?)).to be(false)
+          expect(prov.send(:downgrade_marker?, { 'allow_downgrade' => false })).to be(true)
+        end
+
+        it 'tolerates a legacy hash marker defensively (provider side only, never through catalog munging)' do
+          resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: '2.39', provider: :winget)
+          allow(resource).to receive(:[]).and_call_original
+          allow(resource).to receive(:[]).with(:install_options).and_return([{ allow_downgrade: true }])
+          prov = described_class.new(resource)
+          expect(prov.send(:allow_downgrade?)).to be(true)
+          expect(prov.send(:downgrade_marker?, { allow_downgrade: true })).to be(true)
+        end
+
+        it 'accepts the string flag marker case-insensitively' do
+          prov = downgrade_provider('2.39', '2.40', ['--Allow-Downgrade'])
+          expect(prov).to receive(:winget_exec).with('uninstall', '--id', 'Git.Git').ordered.and_return(ok)
+          expect(prov).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--version', '2.39').ordered.and_return(ok)
+          allow(Puppet).to receive(:notice)
+          prov.install
+        end
+
+        it 'strips the marker from the install command line' do
+          prov = downgrade_provider('2.39', '2.40', ['--allow-downgrade', '--scope', 'machine'])
+          expect(prov).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--version', '2.39', '--scope', 'machine').and_return(ok)
+          allow(prov).to receive(:uninstall).and_return(nil)
+          allow(Puppet).to receive(:notice)
+          prov.install
+        end
+
+        it 'strips the marker from the upgrade command line' do
+          prov = downgrade_provider('2.41', '2.40', ['--allow-downgrade', '--scope', 'machine'])
+          expect(prov).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git', '--version', '2.41', '--scope', 'machine').and_return(ok)
+          allow(Puppet).to receive(:notice)
+          prov.install
+        end
+
+        it 'raises a clear error when the reinstall fails after uninstalling' do
+          prov = downgrade_provider('2.39', '2.40', ['--allow-downgrade'])
+          failed = Puppet::Util::Execution::ProcessOutput.new('reinstall boom', 1)
+          expect(prov).to receive(:winget_exec).with('uninstall', '--id', 'Git.Git').ordered.and_return(ok)
+          expect(prov).to receive(:winget_exec).with('install', '--id', 'Git.Git', '--version', '2.39').ordered.and_return(failed)
+          allow(Puppet).to receive(:notice)
+          expect { prov.install }.to raise_error(Puppet::Error, %r{was uninstalled|left without}i)
+        end
+
+        it 'propagates an uninstall failure unwrapped (never claims the downgrade left the package uninstalled)' do
+          prov = downgrade_provider('2.39', '2.40', ['--allow-downgrade'])
+          allow(prov).to receive(:uninstall).and_raise(Puppet::Error, 'uninstall boom')
+          expect(prov).not_to receive(:perform_install)
+          allow(Puppet).to receive(:notice)
+          begin
+            prov.install
+            raise 'expected install to raise Puppet::Error'
+          rescue Puppet::Error => e
+            expect(e.message).to include('uninstall boom')
+            expect(e.message).not_to match(%r{left without})
+          end
         end
       end
     end
