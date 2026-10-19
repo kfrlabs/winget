@@ -45,7 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resource from puppetlabs/reboot, so exit `0x8A150109`/`0x8A15010A`/`0x8A15010B` reboots)
 - Class `winget::packages`: same optional `reboot_resource` wiring
 - Structured facts `winget_upgrades` (ID + current/available
-  versions for PuppetDB inventory, read by `winget::upgrade`) and
+  versions for PuppetDB inventory, fallback for `winget::upgrade` on
+  server-side compilation) and
   `winget_pins` (fast local `winget pin list`); the upgrade fact memoizes
   its `winget upgrade` invocation per agent run
 - Class `winget::settings`: manages `settings.json` for the agent
@@ -67,10 +68,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Provider `self.prefetch(resources)` with a class-level `winget list`
   cache: N `package` resources now share a single listing instead of one
   listing per resource (use `clear_list_cache!` / `reset!` to invalidate)
-- `winget_upgrades` fact opt-out via `WINGET_UPGRADES_ENABLED=false`
-  (returns `[]` without shelling out); facter.conf TTL caching documented
-  (`facts: { ttls: [{ "winget_upgrades": "7 days" }] }`) for
-  schedule-window setups
+- New `winget::upgrades` function (issue #33): on-demand structured upgrade
+  inventory (same `id` + `current_version`/`available_version` rows as the
+  fact) for `Class['winget::upgrade']`. Enumeration now happens only when
+  the class is declared; the fact rows are only a fallback for server-side
+  compilation (where the function runs without winget)
+- `winget_upgrades` fact is now opt-in inventory (issue #33): it returns
+  `[]` without shelling out unless `WINGET_UPGRADES_ENABLED` is set to a
+  true-like value (`true`, `1`, `yes`, `on`). Nodes without
+  `Class['winget::upgrade']` no longer pay for a `winget upgrade` source
+  round-trip on every agent run; enable the fact for PuppetDB inventory
+  (or for server-side compilation of `winget::upgrade`)
+- `winget::upgrade` documents the consent decision (issue #33):
+  `--accept-source-agreements` is kept deliberately for enumeration, the
+  provider and the Bolt tasks, so winget can never prompt (or stall where
+  nothing answers) on nodes that never opted in
 - Bootstrap `source => 'cdn'`: preferred name for the Microsoft CDN download
   of App Installer (`https://aka.ms/getwinget`); `source => 'msstore'` is kept
   as a deprecated alias with the same behavior and logs a deprecation warning

@@ -1,8 +1,32 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'puppet_x/winget/facts'
 
 describe 'winget::upgrade' do
+  let(:live_table) do
+    <<~OUTPUT
+      Name              Id                      Version   Available   Source
+      --------------------------------------------------------------------
+      Git               Git.Git                 2.40.0    2.41.0      winget
+    OUTPUT
+  end
+  before(:each) do
+    # The class enumerates on demand through the `winget::upgrades` function;
+    # stub the raw runner helper so catalog tests exercise the real function
+    # delegate (uncached enumeration + parsing) and the manifest logic
+    # (live rows vs. fact fallback) instead of shelling out. `nil` simulates
+    # absent/failed enumeration (fallback to the fact); table text simulates
+    # a successful query. Note rspec-puppet caches compiled catalogs by
+    # node/facts/params, which cannot see Ruby stubs: contexts that vary only
+    # the stubbed rows must use distinct facts (see below) or they share the
+    # first-compiled catalog.
+    PuppetX::Winget::Facts.reset!
+    allow(PuppetX::Winget::Facts).to receive(:run_upgrade).and_return(nil)
+  end
+  after(:each) do
+    PuppetX::Winget::Facts.reset!
+  end
   on_supported_os(
     hardwaremodels: ['x86_64'],
     supported_os: [
@@ -27,6 +51,76 @@ describe 'winget::upgrade' do
 
       it 'sets no schedule by default' do
         is_expected.to contain_package('Git.Git').without_schedule
+      end
+
+      context 'with live on-demand enumeration and no fact rows' do
+        # Distinct dummy fact keeps a unique RSpec::Puppet catalog cache key:
+        # without it this context shares byte-identical facts+code with the
+        # undef-fact context below, so the second catalog reuses the first
+        # (stub differences are invisible to the cache key).
+        let(:facts) { os_facts.merge('winget_test_context' => 'live-enumeration') }
+
+        before(:each) do
+          allow(PuppetX::Winget::Facts).to receive(:run_upgrade).and_return(live_table)
+        end
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_package('Git.Git').with_ensure('latest').with_provider('winget') }
+      end
+
+      context 'when live enumeration wins over stale fact rows' do
+        let(:facts) do
+          os_facts.merge('winget_upgrades' => [
+            { 'id' => 'Stale.Stale', 'current_version' => '1.0', 'available_version' => '2.0' },
+          ])
+        end
+
+        before(:each) do
+          allow(PuppetX::Winget::Facts).to receive(:run_upgrade).and_return(live_table)
+        end
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_package('Git.Git').with_ensure('latest') }
+        it { is_expected.not_to contain_package('Stale.Stale') }
+      end
+
+      context 'when live enumeration succeeds with no rows (authoritative, no fallback)' do
+        let(:facts) do
+          os_facts.merge(
+            'winget_test_context' => 'live-empty-authoritative',
+            'winget_upgrades' => [
+              { 'id' => 'Stale.Stale', 'current_version' => '1.0', 'available_version' => '2.0' },
+            ],
+          )
+        end
+
+        before(:each) do
+          allow(PuppetX::Winget::Facts).to receive(:run_upgrade).and_return("No applicable update found.\n")
+        end
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to have_package_resource_count(0) }
+      end
+
+      context 'with unusable rows (missing id) skipped' do
+        let(:facts) do
+          os_facts.merge(
+            'winget_test_context' => 'unusable-rows',
+            'winget_upgrades' => [
+              { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+              { 'current_version' => '1.0', 'available_version' => '2.0' },
+              { 'id' => nil, 'current_version' => '1.0', 'available_version' => '2.0' },
+              { 'id' => '', 'current_version' => '1.0', 'available_version' => '2.0' },
+              nil,
+              42,
+              ['Git.Git'],
+            ],
+          )
+        end
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_package('Git.Git').with_ensure('latest') }
+        it { is_expected.to have_package_resource_count(1) }
       end
 
       context 'with an empty upgrades fact' do
@@ -167,6 +261,22 @@ describe 'winget::upgrade' do
 
         it { is_expected.to compile.with_all_deps }
         it { is_expected.to contain_package('Git.Git').with_ensure('latest') }
+      end
+
+      context 'with malformed pins entries skipped' do
+        let(:facts) do
+          os_facts.merge(
+            'winget_upgrades' => [
+              { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+              { 'id' => 'Google.Chrome', 'current_version' => '120.0', 'available_version' => '121.0' },
+            ],
+            'winget_pins' => ['google.chrome', nil, '', 42, ['nested']],
+          )
+        end
+
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_package('Git.Git').with_ensure('latest') }
+        it { is_expected.not_to contain_package('Google.Chrome') }
       end
 
       context 'with legacy String IDs (pre-structured fact)' do

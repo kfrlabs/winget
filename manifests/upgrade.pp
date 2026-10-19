@@ -2,11 +2,28 @@
 
 # @summary Upgrades every winget package with an available update.
 #
-# Reads structured upgrade rows from the `winget_upgrades` fact (one hash
-# with `id`, `current_version` and `available_version` per package) and
-# declares one `package` resource with `ensure => latest` (winget provider) per ID. Upgrades are
+# Enumerates upgrade rows on demand through the `winget::upgrades` function
+# (one hash with `id`, `current_version` and `available_version` per
+# package) and declares one `package` resource with `ensure => latest`
+# (winget provider) per ID. Upgrades are
 # therefore regular Puppet resources (reporting, noop, `--tags`) instead of
 # an out-of-band scheduled task script.
+#
+# Enumeration runs only when this class is declared: nodes without the class
+# never pay for a `winget upgrade` source round-trip. The opt-in
+# `winget_upgrades` fact (`WINGET_UPGRADES_ENABLED=true`) is only a fallback
+# for server-side compilation, where the function runs on the server without
+# winget, and standalone PuppetDB inventory. The function returns `undef`
+# when winget is absent or the query fails (fall back to the fact rows with
+# a warning) and `[]` only when the query succeeds with no rows (authoritative,
+# no fallback). A stale fact (e.g. TTL-cached)
+# is harmless: `ensure => latest` is idempotent, so IDs with no real upgrade
+# stay in sync.
+#
+# Consent note: enumeration passes `--accept-source-agreements`, kept
+# deliberately so winget can never prompt (or stall where nothing answers)
+# on nodes that never opted in; the same flag is used by the provider and
+# the Bolt tasks for the upgrades applied here.
 #
 # A package already declared elsewhere in the catalog (e.g. `package {
 # 'Git.Git': ensure => present }`) is left alone: redeclaring it would be a
@@ -16,14 +33,11 @@
 # sees resources parsed before this class, so declare `winget::upgrade`
 # after your own `package` resources (or rely on `exclude`).
 #
-# The fact runs `winget upgrade` once per agent run (source round-trips, a few
-# seconds) even when the packages are skipped by a `schedule` metaparameter:
-# the schedule only skips the `package` resources outside the window, it does
-# not skip the fact. When upgrades are confined to a maintenance window,
-# cache the fact with a TTL in facter.conf so the cost is paid at most once
-# per window (`facts: { ttls: [{ "winget_upgrades": "7 days" }] }`), or opt
-# out entirely with `WINGET_UPGRADES_ENABLED=false` (the fact then returns
-# `[]` without shelling out).
+# A Puppet `schedule` metaparameter only skips the `package` resources outside
+# the window, it does not skip enumeration. When upgrades are confined to a
+# maintenance window, cache the opt-in fact with a TTL in facter.conf so the
+# inventory cost is paid at most once per window
+# (`facts: { ttls: [{ "winget_upgrades": "7 days" }] }`).
 #
 # Ordering with the bootstrap class is done at the call site:
 #
@@ -97,7 +111,7 @@
 #   #   - Google.Chrome
 #   # Absent IDs declare no resource and are never installed (unlike
 #   # `package { ensure => latest }`), because IDs are matched against the
-#   # `winget_upgrades` fact which only lists installed packages.
+#   # on-demand enumeration which only lists installed packages.
 #
 # @example Reuse a schedule declared elsewhere
 #   schedule { 'maintenance-window':
@@ -152,22 +166,38 @@ class winget::upgrade (
     $_schedule = $schedule
   }
 
-  # Winget IDs are case-insensitive: compare lowercased. The fact returns
-  # structured rows; accept plain String IDs too (older agents).
-  $raw_upgrades = $facts['winget_upgrades'] ? {
+  # Winget IDs are case-insensitive: compare lowercased. The enumeration
+  # returns structured rows; accept plain String IDs too (older agents).
+  # Live on-demand enumeration wins: `undef` (absent/error) falls back to the
+  # fact rows for server-side compilation (where the function runs without
+  # winget); `[]` (successful query with no rows) is authoritative and does
+  # not fall back. A fallback emits a warning, and an empty result emits a
+  # notice, so the no-op is visible in reports without failing the catalog.
+  $fact_upgrades = $facts['winget_upgrades'] ? {
     undef   => [],
     default => $facts['winget_upgrades'],
   }
-  $upgradable = $raw_upgrades.map |$row| {
-    $row =~ String ? { true => $row, default => $row['id'] }
+  $live_upgrades = winget::upgrades()
+  if $live_upgrades == undef {
+    warning("winget::upgrade: on-demand enumeration unavailable (winget absent or query failed); falling back to 'winget_upgrades' fact rows, which may be stale on server-side compilation.")
   }
+  $raw_upgrades = $live_upgrades ? {
+    undef   => $fact_upgrades,
+    default => $live_upgrades,
+  }
+  if $raw_upgrades.empty {
+    notice("winget::upgrade: no upgradable packages found (on-demand enumeration and 'winget_upgrades' fact yielded no rows); the node may be up to date, or enumeration may have failed - check winget and source configuration if unexpected.")
+  }
+  $upgradable = $raw_upgrades.map |$row| {
+    $row =~ String[1] ? { true => $row, default => $row =~ Hash ? { true => $row['id'], default => undef } }
+  }.filter |$id| { $id =~ String[1] }
   $pinned = $facts['winget_pins'] ? {
     undef   => [],
     default => $facts['winget_pins'],
   }
   $only_lc = $only.map |$id| { $id.downcase }
   $exclude_lc = $exclude.map |$id| { $id.downcase }
-  $pinned_lc = $pinned.map |$id| { $id.downcase }
+  $pinned_lc = $pinned.filter |$id| { $id =~ String[1] }.map |$id| { $id.downcase }
   $targets = $upgradable.filter |$id| {
     ($only_lc.empty or $id.downcase in $only_lc) and !($id.downcase in $exclude_lc) and !($respect_pins and ($id.downcase in $pinned_lc))
   }.unique
