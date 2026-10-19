@@ -29,7 +29,9 @@ optional. `ensure`, `install_options`, `uninstall_options` and `schedule`
 map to `package` resource attributes; `source`, `scope`, `architecture`,
 `location`, `override`, `installer_type` and `locale` are translated into
 `winget install`/`winget upgrade` flags; `hold` maps to the `mark`
-property (`winget pin add` / `winget pin remove`).
+property (`winget pin add` / `winget pin remove`); `allow_downgrade`
+opts a pinned version in to the destructive uninstall-then-install
+downgrade (provider strips the marker before calling winget).
 * [`Winget::PackagesHash`](#Winget--PackagesHash): Hash of winget packages for `winget::packages`.
 Keys are winget package IDs. Values are either a shorthand ensure string
 (`'installed'`, `'latest'`, `'2.40.0'`, `'absent'`, ...) or a full
