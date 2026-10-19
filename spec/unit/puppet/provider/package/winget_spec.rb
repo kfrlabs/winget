@@ -220,6 +220,27 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
     end
 
+    context 'with OEM codepage output (IBM437, e.g. French package names)' do
+      # winget writes in the OEM console codepage while Puppet strings are
+      # UTF-8: parsing must transcode instead of raising
+      # Encoding::CompatibilityError (IBM437 vs UTF-8).
+      let(:output) do
+        lines = [
+          format('%-22s%-30s%-12s%s', 'Name', 'Id', 'Version', 'Source'),
+          '-' * 80,
+          format('%-22s%-30s%-12s%s', 'Café', 'Café.Café', '1.0.0', 'winget'),
+        ]
+        (lines.join("\n") + "\n").encode('IBM437')
+      end
+
+      it 'parses packages without raising an encoding error' do
+        result = provider.parse_winget_list(output)
+        expect(result).to have_key('café.café')
+        expect(result['café.café'][:name]).to eq('Café')
+        expect(result['café.café'][:name].encoding).to eq(Encoding::UTF_8)
+      end
+    end
+
     context 'with missing source column' do
       let(:output) do
         <<~OUTPUT
@@ -669,6 +690,27 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
         expect(provider.update).to be_nil
       end
     end
+
+    context 'when an older winget reports no upgrade with exit code 1' do
+      it 'treats update as idempotent success instead of failing' do
+        upgrade_output = Puppet::Util::Execution::ProcessOutput.new(
+          "No available upgrade found.\nNo newer package versions are available from the configured sources.", 1
+        )
+        expect(provider).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git').and_return(upgrade_output)
+        expect(provider.update).to be_nil
+      end
+    end
+
+    context 'when an older winget reports a missing package with exit code 1' do
+      it 'falls back to install so ensure => latest works on absent packages' do
+        upgrade_output = Puppet::Util::Execution::ProcessOutput.new(
+          'No packages found matching input criteria.', 1
+        )
+        expect(provider).to receive(:winget_exec).with('upgrade', '--id', 'Git.Git').and_return(upgrade_output)
+        expect(provider).to receive(:install)
+        provider.update
+      end
+    end
   end
 
   describe '#latest' do
@@ -903,6 +945,21 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
     end
 
+    context 'with exit code 1 and no-upgrade text (older winget builds)' do
+      let(:code) { 1 }
+      let(:output) do
+        Puppet::Util::Execution::ProcessOutput.new(
+          "No available upgrade found.\nNo newer package versions are available from the configured sources.", code
+        )
+      end
+      it 'returns nil for upgrade (idempotent)' do
+        expect(provider.send(:handle_exit_code, output, 'upgrade')).to be_nil
+      end
+      it 'raises for other actions' do
+        expect { provider.send(:handle_exit_code, output, 'install') }.to raise_error(Puppet::Error, %r{exit code 1})
+      end
+    end
+
     context 'with unknown exit code' do
       let(:code) { 999 }
       it 'raises with exit code' do
@@ -1013,6 +1070,16 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       expect(described_class.list_unavailable?).to be true
       # A second call retries instead of serving a cached empty result.
       expect(described_class.instances_list).to eq({})
+    end
+
+    it 'warns without raising an encoding error when failed output is OEM-encoded' do
+      allow(Puppet).to receive(:warning)
+      allow(PuppetX::Winget::Runner).to receive(:run).and_return(
+        Puppet::Util::Execution::ProcessOutput.new('échec interne'.encode('IBM437'), 0x8A150001),
+      )
+      expect { described_class.instances_list }.not_to raise_error
+      expect(described_class.instances_list).to eq({})
+      expect(described_class.list_unavailable?).to be true
     end
 
     it 'does not cache a listing that raised' do

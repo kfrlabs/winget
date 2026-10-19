@@ -366,6 +366,18 @@ RSpec.describe PuppetX::Winget::Facts do
       ])
     end
 
+    it 'parses OEM-encoded (IBM437) output without raising an encoding error' do
+      lines = [
+        format('%-24s%-24s%-10s%-12s%s', 'Nom', 'Id', 'Version', 'Disponible', 'Source'),
+        '-' * 90,
+        format('%-24s%-24s%-10s%-12s%s', 'Café', 'Café.Café', '1.0.0', '1.0.1', 'winget'),
+      ]
+      output = (lines.join("\n") + "\n").encode('IBM437')
+      expect(described_class.parse_winget_upgrade(output)).to eq([
+        { 'id' => 'Café.Café', 'current_version' => '1.0.0', 'available_version' => '1.0.1' },
+      ])
+    end
+
     it 'deduplicates rows across the explicit-targeting table' do
       # winget prints a second table with its own header when some upgrades
       # require explicit targeting (unknown versions). Both tables are
