@@ -104,11 +104,11 @@ jobs:
     # SYSTEM and the documented pitfalls (per-user aliases, WindowsApps ACLs,
     # machine vs user install scope) only show there. The job exercises real
     # operations — bootstrap, machine-scope install, pin add/no-op/drift/
-    # remove, source add/no-op/drift/remove, facts, tasks, upgrade, removals —
-    # and asserts end state after each apply, so a guard regression (e.g. the
-    # `Select-String` exit-code bug) fails the job instead of silently
-    # skipping. The `openvox` variant (issue #44) runs the same steps with
-    # the OpenVox 8 agent.
+    # remove, built-in-source remove/add/no-op/drift/restore, facts, tasks,
+    # upgrade, removals — and asserts end state after each apply, so a guard
+    # regression (e.g. the `Select-String` exit-code bug) fails the job
+    # instead of silently skipping. The `openvox` variant (issue #44) runs
+    # the same steps with the OpenVox 8 agent.
     name: 'Acceptance (${{ matrix.agent }} agent, apply as SYSTEM, Windows)'
     runs-on: windows-latest
     strategy:
@@ -338,49 +338,72 @@ jobs:
           "@ | Set-Content -Encoding ascii C:\Temp\winget_pin_absent.pp
           powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_pin_absent.pp' -AllowChanges"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Source add / no-op / drift URL / remove as SYSTEM
-        # Exercises winget::source end to end, including the issue #38 drift
-        # convergence (changed URL must converge in one run).
+      - name: Source remove / add / no-op / drift explicit / restore as SYSTEM
+        # Exercises winget::source end to end on the built-in `winget-font`
+        # source (Explicit=true originally, restored at the end, so the
+        # runner keeps its default sources): remove, add from absent, no-op
+        # apply, drift of `explicit` (issue #38: must converge in one run,
+        # second apply a no-op), and restoration of the original state.
+        # A throwaway probe name is not usable: `source add` refuses a URL
+        # that is already registered under another name, and the only
+        # reachable valid endpoints are the three default sources.
         shell: powershell
         run: |
           @"
           class { 'winget':
             ensure => present,
           }
-          winget::source { 'acceptance-probe':
-            ensure => present,
-            url    => 'https://cdn.winget.microsoft.com/cache',
-          }
-          Class['winget'] -> Winget::Source['acceptance-probe']
-          "@ | Set-Content -Encoding ascii C:\Temp\winget_source.pp
-          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source.pp' -AllowChanges"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source.pp'"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          @"
-          class { 'winget':
-            ensure => present,
-          }
-          winget::source { 'acceptance-probe':
-            ensure => present,
-            url    => 'https://cdn.winget.microsoft.com/fonts',
-          }
-          Class['winget'] -> Winget::Source['acceptance-probe']
-          "@ | Set-Content -Encoding ascii C:\Temp\winget_source_drift.pp
-          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source_drift.pp' -AllowChanges"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source_drift.pp'"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          @"
-          class { 'winget':
-            ensure => present,
-          }
-          winget::source { 'acceptance-probe':
+          winget::source { 'winget-font':
             ensure => absent,
           }
-          Class['winget'] -> Winget::Source['acceptance-probe']
+          Class['winget'] -> Winget::Source['winget-font']
           "@ | Set-Content -Encoding ascii C:\Temp\winget_source_absent.pp
           powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source_absent.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source_absent.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @"
+          class { 'winget':
+            ensure => present,
+          }
+          winget::source { 'winget-font':
+            ensure      => present,
+            url         => 'https://cdn.winget.microsoft.com/fonts',
+            source_type => 'Microsoft.PreIndexed.Package',
+            trust_level => 'trusted',
+          }
+          Class['winget'] -> Winget::Source['winget-font']
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_source_add.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source_add.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source_add.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @"
+          class { 'winget':
+            ensure => present,
+          }
+          winget::source { 'winget-font':
+            ensure      => present,
+            url         => 'https://cdn.winget.microsoft.com/fonts',
+            source_type => 'Microsoft.PreIndexed.Package',
+            trust_level => 'trusted',
+            explicit    => true,
+          }
+          Class['winget'] -> Winget::Source['winget-font']
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_source_explicit.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source_explicit.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source_explicit.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          . C:\Temp\acceptance_env.ps1
+          $winget = (Get-ChildItem -Path 'C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*__8wekyb3d8bbwe\winget.exe' | Select-Object -First 1).FullName
+          $rows = @(& $winget source export | Where-Object { $_ -match '^\s*\{' } | ForEach-Object { $_ | ConvertFrom-Json })
+          $row = @($rows | Where-Object { $_.Name -ieq 'winget-font' })
+          if (-not $row) { Write-Error 'winget-font source missing after restore.'; exit 1 }
+          if (-not $row[0].Explicit) { Write-Error 'winget-font source is not explicit after restore.'; exit 1 }
+          '@ | Set-Content -Encoding ascii C:\Temp\assert_source_restored.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\assert_source_restored.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Facts have the expected shapes as SYSTEM
         shell: powershell

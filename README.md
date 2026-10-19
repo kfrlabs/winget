@@ -1155,8 +1155,12 @@ show there:
 5. `winget::pin` add, no-op apply, drift to `blocking => true` (must converge
    in one run, second apply a no-op, `pin list` shows `Blocking`), then
    remove.
-6. `winget::source` add, no-op apply, drift of the URL (must converge in one
-   run, second apply a no-op), then remove.
+6. `winget::source` on the built-in `winget-font` source: remove, add from
+   absent, no-op apply, drift of `explicit` (must converge in one run,
+   second apply a no-op) and restoration of the original explicit state
+   (a throwaway probe name is unusable: `source add` refuses a URL already
+   registered under another name, and the only reachable valid endpoints
+   are the default sources).
 7. Asserts the `winget_path` / `winget_version` / `winget_pins` facts have the
    expected shapes as SYSTEM.
 8. Runs the `winget::list_upgrades` task script as SYSTEM and requires exit 0
