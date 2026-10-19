@@ -75,6 +75,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fact) for `Class['winget::upgrade']`. Enumeration now happens only when
   the class is declared; the fact rows are only a fallback for server-side
   compilation (where the function runs without winget)
+- `ensure => absent` for the `cdn` / `github` / `local` installs now also
+  removes the staged provisioned package (`Remove-AppxProvisionedPackage`):
+  `Remove-AppxPackage -AllUsers` alone fails with `0x80070032` on staged
+  images (seen on the CI runner), and provisioned installs from our own
+  bootstrap fallback were never removed. Each step is best effort; the exec
+  fails closed only when an instance still resolves
 - `winget_upgrades` fact is now opt-in inventory (issue #33): it returns
   `[]` without shelling out unless `WINGET_UPGRADES_ENABLED` is set to a
   true-like value (`true`, `1`, `yes`, `on`). Nodes without

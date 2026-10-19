@@ -147,6 +147,17 @@ describe 'winget::install::cdn' do
         .with_onlyif(%r{Get-AppxPackage -AllUsers Microsoft\.DesktopAppInstaller})
     end
 
+    it 'also removes the staged provisioned package (Remove-AppxPackage alone fails with 0x80070032 on staged images)' do
+      exec = catalogue.resource('Exec[winget_uninstall_cdn_winget]')
+      expect(exec[:command]).to match(%r{Remove-AppxProvisionedPackage -Online})
+      expect(exec[:command]).to match(%r{still installed})
+    end
+
+    it 'fires when only a provisioned package remains' do
+      exec = catalogue.resource('Exec[winget_uninstall_cdn_winget]')
+      expect(exec[:onlyif]).to match(%r{Get-AppxProvisionedPackage -Online})
+    end
+
     it 'declares no install exec' do
       is_expected.not_to contain_exec('winget_install_cdn_winget')
     end
