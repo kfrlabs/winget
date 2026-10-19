@@ -80,11 +80,13 @@ class winget::settings (
   # custom $settings_path) it may not exist yet, which would otherwise make
   # the `file` resource below fail with "parent directory does not exist".
   $parent_dir = regsubst($resolved_path, '/[^/]+$', '')
+  # Escape single quotes for PowerShell single-quoted literals.
+  $safe_parent_dir = regsubst($parent_dir, "'", "''", 'G')
 
   if $facts['winget_path'] {
     exec { 'winget-settings-ensure-localstate-dir':
-      command => "${powershell} -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '${parent_dir}' | Out-Null\"",
-      unless  => "${powershell} -NoProfile -Command \"if (Test-Path -LiteralPath '${parent_dir}') { exit 0 } else { exit 1 }\"",
+      command => "${powershell} -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '${safe_parent_dir}' | Out-Null\"",
+      unless  => "${powershell} -NoProfile -Command \"if (Test-Path -LiteralPath '${safe_parent_dir}') { exit 0 } else { exit 1 }\"",
       timeout => 60,
     }
 

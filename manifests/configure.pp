@@ -34,14 +34,16 @@ define winget::configure (
   $winget = $facts['winget_path']
 
   if $winget {
+    # Escape single quotes for PowerShell single-quoted literals.
+    $safe_source = regsubst($source, "'", "''", 'G')
     $agreements_flag = $accept_configuration_agreements ? {
       true    => ' --accept-configuration-agreements',
       default => '',
     }
 
     exec { "winget-configure-${title}":
-      command => "${powershell} -NoProfile -Command \"& '${winget}' configure -f '${source}'${agreements_flag} --disable-interactivity\"",
-      unless  => "${powershell} -NoProfile -Command \"& '${winget}' configure test -f '${source}'${agreements_flag} --disable-interactivity\"",
+      command => "${powershell} -NoProfile -Command \"& '${winget}' configure -f '${safe_source}'${agreements_flag} --disable-interactivity\"",
+      unless  => "${powershell} -NoProfile -Command \"& '${winget}' configure test -f '${safe_source}'${agreements_flag} --disable-interactivity\"",
       timeout => 1800,
     }
   } else {

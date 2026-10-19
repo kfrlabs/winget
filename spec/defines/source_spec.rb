@@ -134,6 +134,26 @@ describe 'winget::source' do
     end
   end
 
+  context 'with quotes and regex metacharacters in title and url (issue #41)' do
+    let(:title) { "foo.bar+c++(x)'s" }
+    let(:params) { { url: "https://example.com/a'b" } }
+
+    it { is_expected.to compile.with_all_deps }
+
+    it 'doubles single quotes in PowerShell single-quoted literals' do
+      command = catalogue.resource('Exec', "winget-source-add-#{title}")[:command]
+      expect(command).to include("--name 'foo.bar+c++(x)''s'")
+      expect(command).to include("--arg 'https://example.com/a''b'")
+    end
+
+    it 'escapes the name as regex in the list guard' do
+      guard = catalogue.resource('Exec', "winget-source-add-#{title}")[:unless]
+      expect(guard).to include("[regex]::Escape('foo.bar+c++(x)''s')")
+      # A different name differing only by regex metacharacters must not match.
+      expect(guard).not_to match(%r{\^foo\.bar})
+    end
+  end
+
   context 'without winget (fresh bootstrap)' do
     let(:facts) do
       {

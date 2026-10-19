@@ -75,7 +75,11 @@ class winget::sources (
       # Sources listed by `winget source list` (header and separator skipped,
       # first column is the name) beyond the expected set trigger the reset.
       $expected = ($default_sources + $entries.keys).unique
-      $quoted = $expected.map |$source_name| { "'${source_name}'" }
+      # Escape single quotes for PowerShell single-quoted literals.
+      $quoted = $expected.map |$source_name| {
+        $safe_name = regsubst($source_name, "'", "''", 'G')
+        "'${safe_name}'"
+      }
       $expected_list = join($quoted, ', ')
       exec { 'winget-source-reset':
         command => "${powershell} -NoProfile -Command \"& '${winget}' source reset --force --disable-interactivity\"",

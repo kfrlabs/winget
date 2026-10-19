@@ -55,6 +55,14 @@ define winget::source (
   if $winget {
     # Escape single quotes for PowerShell single-quoted literals.
     $safe_title = regsubst($title, "'", "''", 'G')
+    $safe_source_type = $source_type ? {
+      undef   => undef,
+      default => regsubst($source_type, "'", "''", 'G'),
+    }
+    $safe_trust_level = $trust_level ? {
+      undef   => undef,
+      default => regsubst($trust_level, "'", "''", 'G'),
+    }
 
     # A source table row starts with the source name: match it at line
     # start followed by whitespace. Skip the header and separator rows so a
@@ -67,13 +75,16 @@ define winget::source (
         fail("winget::source[${title}]: url is required when ensure => present.")
       }
 
-      $type_flag = $source_type ? {
+      # Escape single quotes in user-supplied values for PowerShell single-quoted literals.
+      $safe_url = regsubst($url, "'", "''", 'G')
+
+      $type_flag = $safe_source_type ? {
         undef   => '',
-        default => " --type '${source_type}'",
+        default => " --type '${safe_source_type}'",
       }
-      $trust_flag = $trust_level ? {
+      $trust_flag = $safe_trust_level ? {
         undef   => '',
-        default => " --trust-level '${trust_level}'",
+        default => " --trust-level '${safe_trust_level}'",
       }
       $explicit_flag = $explicit ? {
         true    => ' --explicit',
@@ -101,7 +112,7 @@ define winget::source (
       }
 
       exec { "winget-source-add-${title}":
-        command     => "${powershell} -NoProfile -Command \"& '${winget}' source add --name '${safe_title}' --arg '${url}'${type_flag}${trust_flag}${explicit_flag}${header_flag}${agreements_flag} --disable-interactivity\"",
+        command     => "${powershell} -NoProfile -Command \"& '${winget}' source add --name '${safe_title}' --arg '${safe_url}'${type_flag}${trust_flag}${explicit_flag}${header_flag}${agreements_flag} --disable-interactivity\"",
         unless      => $listed_check,
         environment => $header_environment,
         timeout     => 300,

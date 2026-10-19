@@ -160,13 +160,17 @@ class winget (
   # Main winget installation logic
   if $enable_winget {
     if $real_ensure == 'absent' {
-      # Uninstall winget via winget itself (if available) or AppX removal.
-      # No collector chaining here: this package itself uses the winget
-      # provider, so chaining to Package <| provider == winget |> would be
-      # a dependency cycle on itself.
-      package { 'Microsoft.DesktopAppInstaller':
-        ensure   => 'absent',
-        provider => 'winget',
+      # Remove AppX without a Package resource: a
+      # `package { 'Microsoft.DesktopAppInstaller': provider => winget }`
+      # here would be contained in Class['winget'], so the documented
+      # `Class['winget'] -> Package <| provider == winget |>` collector
+      # would make it depend on its own container (dependency cycle).
+      # The install defines already implement the tested removal.
+      winget::install::msstore { 'winget':
+        ensure => 'absent',
+      }
+      if !$packages.empty {
+        warning('winget: ensure => absent removes winget itself; entries in winget::packages cannot converge once winget is gone.')
       }
     } else {
       # Dependencies only make sense together with a local bundle.

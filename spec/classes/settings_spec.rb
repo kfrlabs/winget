@@ -63,6 +63,18 @@ describe 'winget::settings' do
         end
       end
 
+      context "with a quote in settings_path (issue #41)" do
+        let(:params) { { settings_path: "C:/Configs/a'b/settings.json" } }
+
+        it { is_expected.to compile.with_all_deps }
+
+        it 'doubles single quotes in the directory guard' do
+          exec = catalogue.resource('Exec', 'winget-settings-ensure-localstate-dir')
+          expect(exec[:command]).to include("C:/Configs/a''b")
+          expect(exec[:unless]).to include("C:/Configs/a''b")
+        end
+      end
+
       context 'without winget (fresh bootstrap)' do
         let(:facts) { os_facts }
 

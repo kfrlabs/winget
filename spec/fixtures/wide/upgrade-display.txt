@@ -1,0 +1,7 @@
+Name                    ID                            Version       Verfügbar     Quelle
+----------------------------------------------------------------------------------------
+日本語パッケージ        CJK.Package                   1.0           2.0           winget
+Café Münchën App        Accented.App                  3.1           3.2           winget
+Very Long App Name Tru… Truncated.App                 6.0.35        6.0.36        winget
+🎉 Party App            Emoji.Party                   3.0           4.0           winget
+4 Upgrades verfügbar.

@@ -24,9 +24,13 @@ Extra shapes with dedicated expectations (excluded from the uniform loops):
   its longest (truncated `…`) entry, so full cells keep a single-space gap
   while column starts stay on the header offsets.
 - `wide/upgrade-de.txt`: CJK (BMP) and emoji (astral) package names under a
-  German header. Ruby counts characters, so both rows parse; PowerShell
-  counts UTF-16 code units, so the CJK row aligns but the emoji row shifts
-  by one unit per astral character (BMP-only assumption for full parity).
+  German header (legacy char-aligned simulation, still parses).
+- `wide/upgrade-display.txt` (issue #32): display-aligned CJK, accented,
+  `…`-truncated and emoji names under a German header. Winget pads by
+  display width, not by character count, so the CJK row uses fewer
+  characters (80 vs 88) to reach the same 88 display columns; the parsers
+  slice with `display_slice` / `Get-DisplaySubstring` (East Asian Width +
+  astral wide) so all four rows parse in Ruby and PowerShell.
 
 Parsing notes (mirrored Ruby ↔ PowerShell):
 - Short rows slice leniently: a row ending inside the Available column
