@@ -48,9 +48,13 @@ group :system_tests do
 end
 
 puppet_version = ENV['PUPPET_GEM_VERSION']
+puppet_version = nil if puppet_version.nil? || puppet_version.empty?
 openvox_version = ENV['OPENVOX_GEM_VERSION']
+openvox_version = nil if openvox_version.nil? || openvox_version.empty?
 facter_version = ENV['FACTER_GEM_VERSION']
+facter_version = nil if facter_version.nil? || facter_version.empty?
 hiera_version = ENV['HIERA_GEM_VERSION']
+hiera_version = nil if hiera_version.nil? || hiera_version.empty?
 
 gems = {}
 

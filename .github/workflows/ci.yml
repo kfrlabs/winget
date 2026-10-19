@@ -172,11 +172,17 @@ jobs:
           '@ | Set-Content -Encoding ascii C:\Temp\apply_manifest.ps1
           @'
           # Runs a payload .ps1 as SYSTEM via a one-shot scheduled task and
-          # exits with the payload exit code (LastTaskResult).
+          # exits with the payload exit code (LastTaskResult). The payload
+          # runs in another session, so its output is captured to a log file
+          # (via cmd.exe redirection) and shown when it fails.
+          # (`powershell.exe -File` arguments cannot carry redirections
+          # directly: the task scheduler starts the binary without a shell.)
           param([Parameter(Mandatory = $true)][string]$ScriptPath, [string]$ScriptArgs = '')
           $taskName = 'winget-acceptance-system'
+          $logFile = 'C:\Temp\as_system_task.log'
           Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-          $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" $ScriptArgs"
+          Remove-Item -Force $logFile -ErrorAction SilentlyContinue
+          $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\cmd.exe" -Argument "/c powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" $ScriptArgs > `"$logFile`" 2>&1"
           $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
           Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
           Start-ScheduledTask -TaskName $taskName
@@ -188,6 +194,11 @@ jobs:
           } while ($state -ne 'Ready')
           $code = (Get-ScheduledTaskInfo -TaskName $taskName).LastTaskResult
           Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+          if (($code -ne 0) -and (Test-Path $logFile)) {
+            Write-Host '--- SYSTEM task output ---'
+            Get-Content $logFile
+            Write-Host '--- end of SYSTEM task output ---'
+          }
           exit $code
           '@ | Set-Content -Encoding ascii C:\Temp\Invoke-AsSystem.ps1
       - name: Stage module into the agent modulepath
@@ -244,10 +255,13 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\probe_winget.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install a package machine-scope as SYSTEM (changes, then idempotent)
-        # 7-Zip: small, stable, silent. The second apply must exit 0, which
-        # proves the provider sees the SYSTEM-wide install (a user-scope
-        # install would be invisible to `winget list` as SYSTEM and the
-        # second apply would report changes again).
+        # 7-Zip: small, stable, silent. `scope` is translated to an install
+        # flag by `winget::packages`, but a raw `package` resource has no
+        # `scope` attribute: pass `--scope machine` via `install_options`.
+        # The second apply must exit 0, which proves the provider sees the
+        # SYSTEM-wide install (a user-scope install would be invisible to
+        # `winget list` as SYSTEM and the second apply would report changes
+        # again).
         shell: powershell
         run: |
           @"
@@ -255,9 +269,9 @@ jobs:
             ensure => present,
           }
           package { '7zip.7zip':
-            ensure   => present,
-            provider => winget,
-            scope    => machine,
+            ensure          => present,
+            provider        => winget,
+            install_options => ['--scope', 'machine'],
           }
           Class['winget'] -> Package['7zip.7zip']
           "@ | Set-Content -Encoding ascii C:\Temp\winget_install.pp
