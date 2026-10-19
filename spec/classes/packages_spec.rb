@@ -116,6 +116,59 @@ describe 'winget::packages' do
         end
       end
 
+      context 'with allow_downgrade => true' do
+        let(:params) { { entries: { 'Git.Git' => { 'ensure' => '2.39.0', 'allow_downgrade' => true } } } }
+
+        it { is_expected.to compile.with_all_deps }
+
+        it 'appends the downgrade marker to install_options' do
+          is_expected.to contain_package('Git.Git')
+            .with_ensure('2.39.0')
+            .with_provider('winget')
+            .with_install_options(['--allow-downgrade'])
+        end
+      end
+
+      context 'with allow_downgrade => true and structured flags' do
+        let(:params) do
+          {
+            entries: {
+              'Git.Git' => {
+                'ensure'          => '2.39.0',
+                'scope'           => 'machine',
+                'allow_downgrade' => true,
+              },
+            },
+          }
+        end
+
+        it { is_expected.to compile.with_all_deps }
+
+        it 'appends the marker after the structured flags' do
+          is_expected.to contain_package('Git.Git').with_install_options(
+            ['--scope', 'machine', '--allow-downgrade'],
+          )
+        end
+      end
+
+      context 'with allow_downgrade => false' do
+        let(:params) { { entries: { 'Git.Git' => { 'ensure' => '2.39.0', 'allow_downgrade' => false } } } }
+
+        it { is_expected.to compile.with_all_deps }
+
+        it 'adds no marker to install_options' do
+          is_expected.to contain_package('Git.Git').with_install_options([])
+        end
+      end
+
+      context 'without allow_downgrade' do
+        let(:params) { { entries: { 'Git.Git' => { 'ensure' => '2.39.0' } } } }
+
+        it 'adds no marker to install_options' do
+          is_expected.to contain_package('Git.Git').with_install_options([])
+        end
+      end
+
       context 'with an uninstall entry' do
         let(:params) do
           {

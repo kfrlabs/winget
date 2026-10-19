@@ -207,6 +207,39 @@ describe 'winget' do
         it { is_expected.to contain_package('Git.Git').with_ensure('installed').with_provider('winget') }
       end
 
+      context 'with packages and allow_downgrade => true' do
+        let(:params) { { packages: { 'Git.Git' => { 'ensure' => '2.39.0', 'allow_downgrade' => true } } } }
+
+        it { is_expected.to compile.with_all_deps }
+
+        it 'maps the opt-in to the install_options marker' do
+          is_expected.to contain_package('Git.Git')
+            .with_ensure('2.39.0')
+            .with_provider('winget')
+            .with_install_options(['--allow-downgrade'])
+        end
+      end
+
+      context 'with packages and allow_downgrade => false' do
+        let(:params) { { packages: { 'Git.Git' => { 'ensure' => '2.39.0', 'allow_downgrade' => false } } } }
+
+        it { is_expected.to compile.with_all_deps }
+
+        it 'maps to no marker' do
+          is_expected.to contain_package('Git.Git').with_install_options([])
+        end
+      end
+
+      context 'with packages as a shorthand string' do
+        let(:params) { { packages: { 'Git.Git' => '2.39.0' } } }
+
+        it { is_expected.to compile.with_all_deps }
+
+        it 'maps to no marker' do
+          is_expected.to contain_package('Git.Git').with_install_options([])
+        end
+      end
+
       context 'with packages_schedule and packages_reboot_resource forwarding' do
         let(:params) do
           {

@@ -17,6 +17,14 @@
 #   `winget upgrade` flags (appended before any extra `install_options`).
 # - `hold` maps to the `mark` property, i.e. `winget pin add/remove` via the
 #   provider `holdable` feature (see `winget::pin` for blocking/gating pins).
+# - `allow_downgrade` opts a pinned version in to the destructive
+#   uninstall-then-install downgrade: `true` appends the string flag
+#   `'--allow-downgrade'` to `install_options` (stripped by the provider
+#   before calling winget; a string is required because the package type
+#   munges `install_options` hashes to String values only). Default/undef/false means no downgrade: an
+#   older plain-numeric pin falls back to `install --version` with a
+#   notice. Only pinned versions can downgrade (`ensure => latest` never
+#   does); suffixed versions never uninstall even with the opt-in.
 #
 # A package already declared elsewhere in the catalog (e.g. `package {
 # 'Git.Git': ensure => present }`) is left alone: redeclaring it would be a
@@ -154,7 +162,14 @@ class winget::packages (
       undef   => [],
       default => $config['install_options'],
     }
-    $install_options = $scope_flags + $architecture_flags + $location_flags + $override_flags + $installer_type_flags + $locale_flags + $source_flags + $extra_install_options
+    if $config['allow_downgrade'] == true and ($ensure == 'latest' or $ensure == 'present' or $ensure == 'installed' or $ensure == 'absent' or $ensure == 'purged') {
+      warning("winget::packages[${id}]: allow_downgrade => true has no effect with ensure => '${ensure}' (only a pinned older plain-numeric version can downgrade).")
+    }
+    $allow_downgrade_marker = $config['allow_downgrade'] ? {
+      true    => ['--allow-downgrade'],
+      default => [],
+    }
+    $install_options = $scope_flags + $architecture_flags + $location_flags + $override_flags + $installer_type_flags + $locale_flags + $source_flags + $extra_install_options + $allow_downgrade_marker
     $uninstall_options = $config['uninstall_options'] ? {
       undef   => [],
       default => $config['uninstall_options'],
