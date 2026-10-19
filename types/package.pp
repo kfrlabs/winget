@@ -10,7 +10,7 @@
 #   opts a pinned version in to the destructive uninstall-then-install
 #   downgrade (provider strips the marker before calling winget).
 type Winget::Package = Struct[{
-  Optional['ensure']            => Variant[Enum['present', 'installed', 'absent', 'purged', 'latest'], String[1]],
+  Optional['ensure']            => Variant[Enum['present', 'installed', 'absent', 'purged', 'latest'], Pattern[/\A\d[\w.+-]*\z/]],
   Optional['source']            => String[1],
   Optional['scope']             => Enum['user', 'machine'],
   Optional['architecture']      => Enum['x86', 'x64', 'arm', 'arm64'],

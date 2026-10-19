@@ -17,10 +17,13 @@
 #
 # @param ensure
 #   Desired state: 'present', 'absent', or a specific version string.
+#   Anything else (typos included) fails compilation.
 #
 # @param version
-#   Specific version to install (e.g., '1.8.2391'). Recorded for interface
-#   consistency; the installed version is determined by the file content.
+#   DEPRECATED: use `ensure` instead. Specific version to install (e.g.,
+#   '1.8.2391'). Kept for backward compatibility (still honored); setting it
+#   logs a deprecation warning. Recorded for interface consistency; the
+#   installed version is determined by the file content.
 #
 # @param dependencies
 #   Array of dependency AppX/MSIX files to install first. Optional.
@@ -31,10 +34,13 @@
 #   so a mismatching file would reinstall on every run.
 define winget::install::local (
   String $source_path,
-  String $ensure              = 'present',
+  Winget::Ensure $ensure      = 'present',
   Optional[String] $version   = undef,
   Array[String] $dependencies = []
 ) {
+  if $version {
+    warning("winget::install::local[${title}]: the version parameter is deprecated, use ensure => '<version>' instead (still honored for backward compatibility).")
+  }
   if $version and $version =~ /^\d+(\.\d+)+$/ {
     $real_ensure = $version
   } else {

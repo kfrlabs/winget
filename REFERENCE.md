@@ -15,9 +15,10 @@
 ### Defined types
 
 * [`winget::configure`](#winget--configure): Apply a winget configuration file (`winget configure`).
+* [`winget::install::cdn`](#winget--install--cdn): Installs winget from the Microsoft CDN distribution of App Installer.
 * [`winget::install::github`](#winget--install--github): Installs winget from GitHub releases.
 * [`winget::install::local`](#winget--install--local): Installs winget from a local AppX/MSIX/MSIXBundle file.
-* [`winget::install::msstore`](#winget--install--msstore): Installs winget from the Microsoft CDN distribution of App Installer.
+* [`winget::install::msstore`](#winget--install--msstore): Deprecated alias for winget::install::cdn.
 * [`winget::pin`](#winget--pin): Pin (hold) a winget package against unattended upgrades.
 * [`winget::source`](#winget--source): Manage a single winget package source.
 
@@ -27,6 +28,7 @@
 
 ### Data types
 
+* [`Winget::Ensure`](#Winget--Ensure): Permitted `ensure` values for winget bootstrap resources.
 * [`Winget::Package`](#Winget--Package): Structured declaration of a single winget package.
 Value type of `Winget::PackagesHash` (see `winget::packages`). Every key is
 optional. `ensure`, `install_options`, `uninstall_options` and `schedule`
@@ -97,7 +99,9 @@ Ensures winget is available on the system so that the `winget` package provider 
 
 === Prerequisites
 
-* Windows 10 version 1809 (build 17763) or later, Windows Server 2019 or later
+* Windows 10 version 1809 (build 17763) or later, Windows Server 2022 or later
+  (Windows Server 2019 is best effort / untested: Microsoft only documents
+  winget for Windows 10, Windows 11 and Windows Server 2025)
 * Internet access to download the App Installer package (or a local source via `source_path`)
 * SYSTEM account must have read access to `%ProgramFiles%\WindowsApps`
 * Proxy support via `proxy` parameter if the system requires a proxy for internet access
@@ -164,10 +168,12 @@ The following parameters are available in the `winget` class:
 
 ##### <a name="-winget--ensure"></a>`ensure`
 
-Data type: `String`
+Data type: `Winget::Ensure`
 
-Desired state of winget. Valid values: 'present', 'absent', or a specific version string
-(e.g., '1.8.2391'). Default: 'present' (installs latest available).
+Desired state of winget: 'present', 'absent', or a specific version
+string (e.g., '1.8.2391'). Anything else (including typos such as
+'presnt', 'installed' or 'latest', which have no distinct meaning for the
+presence-based bootstrap) fails compilation.
 
 Default value: `'present'`
 
@@ -176,7 +182,8 @@ Default value: `'present'`
 Data type: `Optional[String]`
 
 DEPRECATED: Use `ensure` instead. Specific version to install (e.g., '1.8.2391').
-This parameter is kept for backward compatibility.
+This parameter is kept for backward compatibility and logs a deprecation
+warning when set.
 
 Default value: `undef`
 
@@ -849,6 +856,21 @@ configurations after the bootstrap class:
 
   Class['winget'] -> Winget::Configure <| |>
 
+Trust model: `source` may point at an HTTPS URL. Whoever controls that URL
+controls the node (the configuration runs as SYSTEM with
+`accept_configuration_agreements` defaulting to true), so prefer files from
+internal, pinned locations you control. Only local absolute paths (drive
+letter or UNC) and `https://` URLs are accepted; anything else (including
+cleartext `http://` and relative paths, which would resolve against the
+agent working directory) fails compilation.
+
+Idempotence relies entirely on `winget configure test`: it must exit 0 when
+the system matches and non-zero otherwise. The `test` subcommand requires
+winget >= 1.6; on older builds the guard fails every run and the
+configuration is re-applied each time, so a warning is logged when the
+`winget_version` fact reports an older winget instead of re-applying
+silently.
+
 #### Examples
 
 ##### Apply a baseline configuration
@@ -864,13 +886,15 @@ The following parameters are available in the `winget::configure` defined type:
 
 * [`source`](#-winget--configure--source)
 * [`accept_configuration_agreements`](#-winget--configure--accept_configuration_agreements)
+* [`timeout`](#-winget--configure--timeout)
 
 ##### <a name="-winget--configure--source"></a>`source`
 
 Data type: `String`
 
 Path or HTTPS URL of the configuration file (`winget configure -f`).
-Defaults to the resource title.
+Defaults to the resource title. Must be an absolute local path
+(`C:/...`, `C:\...` or `\\server\share\...`) or an `https://` URL.
 
 Default value: `$title`
 
@@ -880,6 +904,117 @@ Data type: `Boolean`
 
 Whether to pass `--accept-configuration-agreements`. Default: true
 (required for non-interactive agent runs).
+
+Default value: `true`
+
+##### <a name="-winget--configure--timeout"></a>`timeout`
+
+Data type: `Integer`
+
+Seconds before the configure/test commands are killed. Default: 1800.
+Configuration files that install large tool sets may need more.
+
+Default value: `1800`
+
+### <a name="winget--install--cdn"></a>`winget::install::cdn`
+
+Installs winget from the Microsoft CDN distribution of App Installer
+(`https://aka.ms/getwinget`, a .msixbundle). This method is used instead of
+the Microsoft Store app because it works in the SYSTEM context without the
+Store and without an existing winget CLI, and it accepts the same proxy
+settings as the other install methods.
+
+Backs `source => 'cdn'` of the `winget` class. `source => 'msstore'` is a
+deprecated alias kept for backward compatibility (see
+`winget::install::msstore`): the download is the Microsoft CDN in both
+cases, never the Store app.
+
+The install runs only when App Installer is absent (presence guard): this
+matters because the bundle version and the inner payload version can differ
+(e.g. bundle 2026.728.x carrying a 1.29.290 payload), and Windows refuses
+downgrades (0x80073D19), so reinstalling over a newer build would fail.
+
+All commands run through the fully qualified PowerShell executable: the
+`winget` alias is unavailable in the agent/SYSTEM context, so no bare
+`winget` command is used here.
+
+=== Parameters
+
+#### Parameters
+
+The following parameters are available in the `winget::install::cdn` defined type:
+
+* [`ensure`](#-winget--install--cdn--ensure)
+* [`version`](#-winget--install--cdn--version)
+* [`accept_source_agreements`](#-winget--install--cdn--accept_source_agreements)
+* [`proxy`](#-winget--install--cdn--proxy)
+* [`retry_count`](#-winget--install--cdn--retry_count)
+* [`retry_interval`](#-winget--install--cdn--retry_interval)
+* [`fail_on_error`](#-winget--install--cdn--fail_on_error)
+
+##### <a name="-winget--install--cdn--ensure"></a>`ensure`
+
+Data type: `Winget::Ensure`
+
+Desired state: 'present', 'absent', or a specific version string.
+Anything else (typos included) fails compilation.
+
+Default value: `'present'`
+
+##### <a name="-winget--install--cdn--version"></a>`version`
+
+Data type: `Optional[String]`
+
+DEPRECATED: use `ensure` instead. Accepted for interface consistency but
+ignored: the Microsoft CDN always serves the latest App Installer. Pin a
+version with the `github` source or a local file instead. Setting it logs
+a deprecation warning.
+
+Default value: `undef`
+
+##### <a name="-winget--install--cdn--accept_source_agreements"></a>`accept_source_agreements`
+
+Data type: `Boolean`
+
+Kept for interface consistency. Source agreements are implicitly accepted
+by direct package installation.
+
+Default value: `true`
+
+##### <a name="-winget--install--cdn--proxy"></a>`proxy`
+
+Data type: `Optional[String]`
+
+Proxy URL for the download.
+
+Default value: `undef`
+
+##### <a name="-winget--install--cdn--retry_count"></a>`retry_count`
+
+Data type: `Integer`
+
+Number of retry attempts for the installation. Default: 3.
+
+Default value: `3`
+
+##### <a name="-winget--install--cdn--retry_interval"></a>`retry_interval`
+
+Data type: `Integer`
+
+Seconds between retry attempts. Default: 10.
+
+Default value: `10`
+
+##### <a name="-winget--install--cdn--fail_on_error"></a>`fail_on_error`
+
+Data type: `Boolean`
+
+Whether a failed install makes the catalog run fail. Default: true. Set
+to false when another method acts as a fallback (`source => 'auto'`):
+exit code 1 is then accepted, so the failure of this attempt does not
+mark the including class as failed and the fallback still gets a chance.
+Note that Puppet does not retry (`retry_count`) once exit code 1 is
+accepted.
 
 Default value: `true`
 
@@ -907,9 +1042,10 @@ The following parameters are available in the `winget::install::github` defined 
 
 ##### <a name="-winget--install--github--ensure"></a>`ensure`
 
-Data type: `String`
+Data type: `Winget::Ensure`
 
 Desired state: 'present', 'absent', or a specific version string.
+Anything else (typos included) fails compilation.
 
 Default value: `'present'`
 
@@ -917,7 +1053,9 @@ Default value: `'present'`
 
 Data type: `Optional[String]`
 
-Specific version to install (e.g., '1.8.2391'). Defaults to latest release.
+DEPRECATED: use `ensure` instead. Specific version to install (e.g.,
+'1.8.2391'). Kept for backward compatibility (still honored); setting it
+logs a deprecation warning. Defaults to latest release.
 
 Default value: `undef`
 
@@ -978,9 +1116,10 @@ Must be a valid Microsoft.DesktopAppInstaller package.
 
 ##### <a name="-winget--install--local--ensure"></a>`ensure`
 
-Data type: `String`
+Data type: `Winget::Ensure`
 
 Desired state: 'present', 'absent', or a specific version string.
+Anything else (typos included) fails compilation.
 
 Default value: `'present'`
 
@@ -988,8 +1127,10 @@ Default value: `'present'`
 
 Data type: `Optional[String]`
 
-Specific version to install (e.g., '1.8.2391'). Recorded for interface
-consistency; the installed version is determined by the file content.
+DEPRECATED: use `ensure` instead. Specific version to install (e.g.,
+'1.8.2391'). Kept for backward compatibility (still honored); setting it
+logs a deprecation warning. Recorded for interface consistency; the
+installed version is determined by the file content.
 
 Default value: `undef`
 
@@ -1004,26 +1145,11 @@ Default value: `[]`
 
 ### <a name="winget--install--msstore"></a>`winget::install::msstore`
 
-Installs winget from the Microsoft CDN distribution of App Installer
-(`https://aka.ms/getwinget`, a .msixbundle). This method is used instead of
-the Microsoft Store app because it works in the SYSTEM context without the
-Store and without an existing winget CLI, and it accepts the same proxy
-settings as the other install methods.
-
-Backs both `source => 'cdn'` (preferred) and `source => 'msstore'`
-(deprecated alias) of the `winget` class: the download is the Microsoft
-CDN in both cases, never the Store app.
-
-The install runs only when App Installer is absent (presence guard): this
-matters because the bundle version and the inner payload version can differ
-(e.g. bundle 2026.728.x carrying a 1.29.290 payload), and Windows refuses
-downgrades (0x80073D19), so reinstalling over a newer build would fail.
-
-All commands run through the fully qualified PowerShell executable: the
-`winget` alias is unavailable in the agent/SYSTEM context, so no bare
-`winget` command is used here.
-
-=== Parameters
+The Microsoft CDN download (`https://aka.ms/getwinget`) never came from the
+Microsoft Store app; the define was renamed to `winget::install::cdn` to
+stop implying otherwise. This wrapper keeps existing manifests compiling:
+it logs a deprecation warning and declares `winget::install::cdn` with the
+same parameters, including `fail_on_error`.
 
 #### Parameters
 
@@ -1039,7 +1165,7 @@ The following parameters are available in the `winget::install::msstore` defined
 
 ##### <a name="-winget--install--msstore--ensure"></a>`ensure`
 
-Data type: `String`
+Data type: `Winget::Ensure`
 
 Desired state: 'present', 'absent', or a specific version string.
 
@@ -1093,11 +1219,7 @@ Default value: `10`
 Data type: `Boolean`
 
 Whether a failed install makes the catalog run fail. Default: true. Set
-to false when another method acts as a fallback (`source => 'auto'`):
-exit code 1 is then accepted, so the failure of this attempt does not
-mark the including class as failed and the fallback still gets a chance.
-Note that Puppet does not retry (`retry_count`) once exit code 1 is
-accepted.
+to false when another method acts as a fallback (`source => 'auto'`).
 
 Default value: `true`
 
@@ -1116,9 +1238,16 @@ pinned IDs automatically (`respect_pins`, backed by the `winget_pins` fact).
 Do not combine a blocking pin with `ensure => latest` on the same package:
 the explicit upgrade would fail until the pin is removed.
 
-The pin presence guard is ID-based: changing `version` or `blocking` on an
-existing pin requires removing it first (`ensure => absent`, then
-`present` again).
+The pin presence guard is ID-based, but the declared attributes also
+converge: when `blocking` or `version` of an existing pin drift from the
+declaration, the stale pin is removed and re-added in the same run (the
+removal is ordered before the add, and the add guard is re-evaluated after
+the removal). `source` cannot be compared (`pin list` shows no source
+column), so changing only `source` on an existing pin has no effect:
+remove it (`ensure => absent`) and re-add it instead. On winget builds
+whose `pin list` renders no pin-type column, the `blocking` comparison
+degrades to presence-only and a changed `blocking` flag behaves like
+before (documented limitation, warned about in the reference).
 
 Nothing is declared while winget itself is absent (fresh bootstrap): order
 pins after the bootstrap class so they converge on the next run:
@@ -1167,7 +1296,8 @@ Default value: `'present'`
 Data type: `Optional[String[1]]`
 
 Optional gating version (`'1.2.3'` or range `'1.2.*'`). Undef (default)
-means a plain pin without version gating.
+means a plain pin without version gating. Changing it on an existing pin
+removes and re-adds the pin so the catalog converges in one run.
 
 Default value: `undef`
 
@@ -1176,7 +1306,9 @@ Default value: `undef`
 Data type: `Boolean`
 
 Whether the pin blocks even explicit upgrades. Default: false (plain
-pinning: only `upgrade --all` skips the package).
+pinning: only `upgrade --all` skips the package). Changing it on an
+existing pin removes and re-adds the pin so the catalog converges in
+one run.
 
 Default value: `false`
 
@@ -1185,7 +1317,9 @@ Default value: `false`
 Data type: `Optional[String[1]]`
 
 Optional source scoping the pin (`--source`). Undef (default) means all
-sources.
+sources. `pin list` exposes no source column, so changing only `source`
+on an existing pin has no effect: remove the pin first
+(`ensure => absent`), then re-add it.
 
 Default value: `undef`
 
@@ -1205,6 +1339,16 @@ Nothing is declared while winget itself is absent (fresh bootstrap): order
 sources after the bootstrap class so they converge on the next run:
 
   Class['winget'] -> Winget::Source <| |>
+
+Changing `url`, `source_type`, `trust_level` or `explicit` on an existing
+source removes and re-adds it in the same run (the removal is ordered
+before the add, and the add guard is re-evaluated after the removal), so
+a drifted source converges in one run and the next run is a no-op. The
+comparison reads the current definition from `winget source export`
+(JSON, locale-independent). Attributes that cannot be read back are not
+compared: `header` is write-only (see its docs), and on winget builds
+whose export lacks a field (e.g. `Explicit`), that field degrades to
+presence-only.
 
 #### Parameters
 
@@ -1249,7 +1393,9 @@ Default value: `undef`
 Data type: `Optional[Enum['none', 'trusted']]`
 
 Source trust level (`--trust-level`): `none` or `trusted`. Undef
-(default) leaves the winget default.
+(default) leaves the winget default. Changing it on an existing source
+removes and re-adds the source so the catalog converges in one run
+(`trusted` means the exported `TrustLevel` contains `Trusted`).
 
 Default value: `undef`
 
@@ -1258,8 +1404,9 @@ Default value: `undef`
 Data type: `Boolean`
 
 Whether the source is explicit (`--explicit`): explicit sources must be
-targeted with `--source` on every command. Default: false. Changing this
-on an existing source is not enforced (remove and re-add instead).
+targeted with `--source` on every command. Default: false. Changing it
+on an existing source removes and re-adds the source so the catalog
+converges in one run.
 
 Default value: `false`
 
@@ -1268,7 +1415,9 @@ Default value: `false`
 Data type: `Optional[Sensitive[String[1]]]`
 
 Optional REST source HTTP header (`--header`). `Sensitive` so the value
-never lands in logs or reports.
+never lands in logs or reports. The header is write-only: it cannot be
+read back, so changing only the header is not detected — remove the
+source (`ensure => absent`) and re-add it to rotate the header.
 
 Default value: `undef`
 
@@ -1339,6 +1488,15 @@ absent/error/disabled)
 
 ## Data types
 
+### <a name="Winget--Ensure"></a>`Winget::Ensure`
+
+`present`, `absent` or a dotted numeric version (e.g. `1.8.2391`).
+Anything else — including typos such as `presnt`, or `installed` /
+`latest`, which have no distinct meaning for the presence-based bootstrap
+— fails compilation (issue #45).
+
+Alias of `Variant[Enum['present', 'absent'], Pattern[/\A\d+(\.\d+)+\z/]]`
+
 ### <a name="Winget--Package"></a>`Winget::Package`
 
 Structured declaration of a single winget package.
@@ -1355,7 +1513,7 @@ Alias of
 
 ```puppet
 Struct[{
-  Optional['ensure']            => Variant[Enum['present', 'installed', 'absent', 'purged', 'latest'], String[1]],
+  Optional['ensure']            => Variant[Enum['present', 'installed', 'absent', 'purged', 'latest'], Pattern[/\A\d[\w.+-]*\z/]],
   Optional['source']            => String[1],
   Optional['scope']             => Enum['user', 'machine'],
   Optional['architecture']      => Enum['x86', 'x64', 'arm', 'arm64'],

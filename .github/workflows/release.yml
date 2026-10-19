@@ -5,6 +5,14 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  # Dry run (issue #42): validates everything a tag push would, without
+  # publishing to the Forge or creating a GitHub release. Run it on a
+  # throwaway version before cutting the real tag.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to validate (e.g. 1.1.0, without the v prefix)'
+        required: true
 
 permissions:
   contents: write
@@ -48,15 +56,60 @@ jobs:
         with:
           ruby-version: '3.2'
           bundler-cache: true
-      - name: Tag must match metadata.json version
+      - name: Resolve release version
+        id: version
         run: |
-          tag_version="${GITHUB_REF_NAME#v}"
-          metadata_version="$(ruby -rjson -e "puts JSON.parse(File.read('metadata.json'))['version']")"
-          if [ "$tag_version" != "$metadata_version" ]; then
-            echo "::error::Tag v${tag_version} does not match metadata.json version ${metadata_version}."
+          if [ "${{ github.event_name }}" = 'workflow_dispatch' ]; then
+            version='${{ inputs.version }}'
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          if [ -z "$version" ]; then
+            echo '::error::Could not resolve a release version.'
             exit 1
           fi
-          echo "Releasing version ${tag_version}."
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Releasing version ${version}."
+      - name: Tag must match metadata.json version
+        # Skipped on dry runs: there is no tag, only the validated version.
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          version='${{ steps.version.outputs.version }}'
+          metadata_version="$(ruby -rjson -e "puts JSON.parse(File.read('metadata.json'))['version']")"
+          if [ "$version" != "$metadata_version" ]; then
+            echo "::error::Tag v${version} does not match metadata.json version ${metadata_version}."
+            exit 1
+          fi
+      - name: Tagged commit must be reachable from main
+        # Skipped on dry runs (no tag pushed): validates the real release only.
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          git fetch origin main --quiet
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo '::error::Tag does not point at a commit reachable from main. Merge the release commit to main first.'
+            exit 1
+          fi
+      - name: CHANGELOG must have an entry for the version
+        # Runs BEFORE the Forge publish (issue #42): a missing entry used to
+        # fail the job after an irreversible upload, leaving the Forge and
+        # GitHub in different states.
+        run: |
+          version='${{ steps.version.outputs.version }}'
+          python3 - "$version" <<'EOF'
+          import re, sys
+          version = sys.argv[1]
+          text = open('CHANGELOG.md', encoding='utf-8').read()
+          pattern = re.compile(
+              r'^## \[' + re.escape(version) + r'\][^\n]*\n(.*?)(?=^## \[|\Z)',
+              re.M | re.S,
+          )
+          match = pattern.search(text)
+          if not match or not match.group(1).strip():
+              print(f'::error::No CHANGELOG entry found for version {version}.')
+              sys.exit(1)
+          open('/tmp/release_notes.md', 'w', encoding='utf-8').write(match.group(1).strip() + '\n')
+          EOF
+          cat /tmp/release_notes.md
       - name: Install PDK
         run: |
           wget -q "https://apt.puppet.com/puppet-tools-release-$(lsb_release -cs).deb"
@@ -66,6 +119,8 @@ jobs:
       - name: Build the module package
         run: pdk build --force
       - name: Publish to the Puppet Forge
+        # Skipped on dry runs (issue #42): validation only, no side effects.
+        if: github.event_name != 'workflow_dispatch'
         env:
           PUPPET_FORGE_API_KEY: ${{ secrets.PUPPET_FORGE_API_KEY }}
         run: |
@@ -85,26 +140,10 @@ jobs:
             200|201) echo 'Forge upload accepted.' ;;
             *) echo "::error::Forge upload failed (HTTP ${http_code})."; exit 1 ;;
           esac
-      - name: Extract release notes from CHANGELOG.md
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          python3 - "$version" <<'EOF'
-          import re, sys
-          version = sys.argv[1]
-          text = open('CHANGELOG.md', encoding='utf-8').read()
-          pattern = re.compile(
-              r'^## \[' + re.escape(version) + r'\][^\n]*\n(.*?)(?=^## \[|\Z)',
-              re.M | re.S,
-          )
-          match = pattern.search(text)
-          if not match or not match.group(1).strip():
-              print(f'::error::No CHANGELOG entry found for version {version}.')
-              sys.exit(1)
-          open('/tmp/release_notes.md', 'w', encoding='utf-8').write(match.group(1).strip() + '\n')
-          EOF
-          cat /tmp/release_notes.md
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        # Skipped on dry runs (issue #42): validation only, no side effects.
+        if: github.event_name != 'workflow_dispatch'
+        uses: softprops/action-gh-release@efb35369e0ad2afb669228c1b0d510eae64 # v3.0.3
         with:
           files: pkg/*.tar.gz
           body_path: /tmp/release_notes.md

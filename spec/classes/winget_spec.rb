@@ -6,7 +6,7 @@ describe 'winget' do
   on_supported_os(
     hardwaremodels: ['x86_64'],
     supported_os: [
-      { 'operatingsystem' => 'windows', 'operatingsystemrelease' => ['10', '11', '2019', '2022', '2025'] },
+      { 'operatingsystem' => 'windows', 'operatingsystemrelease' => ['10', '11', '2022', '2025'] },
     ]
   ).each do |os, os_facts|
     context "on #{os}" do
@@ -25,14 +25,54 @@ describe 'winget' do
         let(:params) { { ensure: 'present' } }
 
         it { is_expected.to compile.with_all_deps }
-        it { is_expected.to contain_winget__install__msstore('winget') }
+        it { is_expected.to contain_winget__install__cdn('winget') }
+      end
+
+      context 'with invalid ensure values (issue #45)' do
+        context "with ensure => 'presnt'" do
+          let(:params) { { ensure: 'presnt' } }
+
+          it { expect { catalogue }.to raise_error(Puppet::Error, %r{parameter 'ensure'}) }
+        end
+
+        context "with ensure => 'Latest '" do
+          let(:params) { { ensure: 'Latest ' } }
+
+          it { expect { catalogue }.to raise_error(Puppet::Error, %r{parameter 'ensure'}) }
+        end
+
+        context 'with ensure => empty string' do
+          let(:params) { { ensure: '' } }
+
+          it { expect { catalogue }.to raise_error(Puppet::Error, %r{parameter 'ensure'}) }
+        end
+
+        context 'with ensure => installed (no distinct bootstrap meaning)' do
+          let(:params) { { ensure: 'installed' } }
+
+          it { expect { catalogue }.to raise_error(Puppet::Error, %r{parameter 'ensure'}) }
+        end
+      end
+
+      context 'with dotted numeric versions (issue #45)' do
+        context "with ensure => '1.8.2391'" do
+          let(:params) { { ensure: '1.8.2391' } }
+
+          it { is_expected.to compile.with_all_deps }
+        end
+
+        context "with ensure => '2024.1'" do
+          let(:params) { { ensure: '2024.1' } }
+
+          it { is_expected.to compile.with_all_deps }
+        end
       end
 
       context 'with ensure => absent' do
         let(:params) { { ensure: 'absent' } }
 
         it { is_expected.to compile.with_all_deps }
-        it { is_expected.to contain_winget__install__msstore('winget').with_ensure('absent') }
+        it { is_expected.to contain_winget__install__cdn('winget').with_ensure('absent') }
         it { is_expected.not_to contain_package('Microsoft.DesktopAppInstaller') }
 
         context 'with the documented package collector' do
@@ -50,7 +90,7 @@ describe 'winget' do
 
         it 'uses github so the pin converges (msstore always serves latest)' do
           is_expected.to contain_winget__install__github('winget').with_ensure('1.8.2391')
-          is_expected.not_to contain_winget__install__msstore('winget')
+          is_expected.not_to contain_winget__install__cdn('winget')
         end
       end
 
@@ -61,7 +101,7 @@ describe 'winget' do
 
         it 'uses github so the pin converges (msstore always serves latest)' do
           is_expected.to contain_winget__install__github('winget').with_ensure('1.8.2391')
-          is_expected.not_to contain_winget__install__msstore('winget')
+          is_expected.not_to contain_winget__install__cdn('winget')
         end
       end
 
@@ -69,7 +109,7 @@ describe 'winget' do
         let(:params) { { source: 'msstore' } }
 
         it { is_expected.to compile.with_all_deps }
-        it { is_expected.to contain_winget__install__msstore('winget') }
+        it { is_expected.to contain_winget__install__cdn('winget') }
         it { is_expected.not_to contain_winget__install__github('winget') }
       end
 
@@ -77,8 +117,8 @@ describe 'winget' do
         let(:params) { { source: 'cdn' } }
 
         it { is_expected.to compile.with_all_deps }
-        it { is_expected.to contain_winget__install__msstore('winget').with_fail_on_error(true) }
-        it { is_expected.to contain_winget__install__msstore('winget') }
+        it { is_expected.to contain_winget__install__cdn('winget').with_fail_on_error(true) }
+        it { is_expected.to contain_winget__install__cdn('winget') }
         it { is_expected.not_to contain_winget__install__github('winget') }
       end
 
@@ -87,22 +127,22 @@ describe 'winget' do
 
         it { is_expected.to compile.with_all_deps }
         it { is_expected.to contain_winget__install__github('winget') }
-        it { is_expected.not_to contain_winget__install__msstore('winget') }
+        it { is_expected.not_to contain_winget__install__cdn('winget') }
       end
 
       context 'with source => auto' do
         let(:params) { { source: 'auto' } }
 
         it { is_expected.to compile.with_all_deps }
-        it { is_expected.to contain_winget__install__msstore('winget') }
+        it { is_expected.to contain_winget__install__cdn('winget') }
         it { is_expected.to contain_winget__install__github('winget_fallback') }
 
         it 'tolerates a failed cdn attempt so the fallback can still run and the class does not fail' do
-          is_expected.to contain_winget__install__msstore('winget').with_fail_on_error(false)
+          is_expected.to contain_winget__install__cdn('winget').with_fail_on_error(false)
         end
 
         it 'leaves the github fallback independent so it still runs when msstore fails' do
-          ms = catalogue.resource('Winget::Install::Msstore[winget]')
+          ms = catalogue.resource('Winget::Install::Cdn[winget]')
           gh = catalogue.resource('Winget::Install::Github[winget_fallback]')
           expect(ms).not_to be_nil
           expect(gh).not_to be_nil
@@ -121,7 +161,7 @@ describe 'winget' do
         it { is_expected.to compile.with_all_deps }
         it 'uses github directly since msstore always serves latest' do
           is_expected.to contain_winget__install__github('winget').with_ensure('1.8.2391')
-          is_expected.not_to contain_winget__install__msstore('winget')
+          is_expected.not_to contain_winget__install__cdn('winget')
           is_expected.not_to contain_winget__install__github('winget_fallback')
         end
       end
@@ -133,7 +173,7 @@ describe 'winget' do
         it { is_expected.to contain_winget__install__local('winget_local').with_source_path('C:/Sources/winget.appx') }
 
         it 'installs only the local file, not the selected source' do
-          is_expected.not_to contain_winget__install__msstore('winget')
+          is_expected.not_to contain_winget__install__cdn('winget')
           is_expected.not_to contain_winget__install__github('winget')
           is_expected.not_to contain_winget__install__github('winget_fallback')
         end
@@ -145,7 +185,7 @@ describe 'winget' do
         it { is_expected.to compile.with_all_deps }
         it { is_expected.to contain_winget__install__local('winget_local') }
         it { is_expected.not_to contain_winget__install__github('winget') }
-        it { is_expected.not_to contain_winget__install__msstore('winget') }
+        it { is_expected.not_to contain_winget__install__cdn('winget') }
       end
 
       context 'with dependencies and source_path' do
@@ -180,21 +220,21 @@ describe 'winget' do
         let(:params) { { proxy: 'http://proxy.example.com:8080' } }
 
         it { is_expected.to compile.with_all_deps }
-        it { is_expected.to contain_winget__install__msstore('winget').with_proxy('http://proxy.example.com:8080') }
+        it { is_expected.to contain_winget__install__cdn('winget').with_proxy('http://proxy.example.com:8080') }
       end
 
       context 'with accept_source_agreements => false' do
         let(:params) { { accept_source_agreements: false } }
 
         it { is_expected.to compile.with_all_deps }
-        it { is_expected.to contain_winget__install__msstore('winget').with_accept_source_agreements(false) }
+        it { is_expected.to contain_winget__install__cdn('winget').with_accept_source_agreements(false) }
       end
 
       context 'with enable_winget => false' do
         let(:params) { { enable_winget: false } }
 
         it { is_expected.to compile.with_all_deps }
-        it { is_expected.not_to contain_winget__install__msstore('winget') }
+        it { is_expected.not_to contain_winget__install__cdn('winget') }
         it { is_expected.not_to contain_winget__install__github('winget_fallback') }
       end
 
@@ -332,7 +372,7 @@ describe 'winget' do
 
     it { is_expected.to compile.with_all_deps }
     it { is_expected.to contain_class('winget') }
-    it { is_expected.to contain_winget__install__msstore('winget') }
+    it { is_expected.to contain_winget__install__cdn('winget') }
     it { is_expected.to contain_winget__install__github('winget_fallback') }
   end
 end

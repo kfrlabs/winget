@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-19
+
 ### Added
 - Pinned-version downgrade opt-in (issue #34): per-package
   `allow_downgrade` (`Winget::Package` key, translated by
@@ -86,6 +88,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bootstrap `source => 'cdn'`: preferred name for the Microsoft CDN download
   of App Installer (`https://aka.ms/getwinget`); `source => 'msstore'` is kept
   as a deprecated alias with the same behavior and logs a deprecation warning
+- Defined type `winget::install::cdn` (issue #47): the real implementation of
+  the Microsoft CDN bootstrap, backing `source => 'cdn'`;
+  `winget::install::msstore` is now a thin deprecated wrapper (logs a
+  warning, forwards all parameters including `fail_on_error`) so existing
+  manifests keep compiling. Resource titles changed (`winget_install_cdn_*`,
+  `winget_uninstall_cdn_*`): exec titles show up in reports
+- Simplified `hiera.yaml` (issue #47): single `common` level. The per-OS
+  levels pointed at files that do not exist (`data/` only ships
+  `common.yaml`) and only added failed lookups
+- Bootstrap download hardening (issue #39): the App Installer bundle is
+  downloaded into a per-run unique directory (no fixed name in the shared
+  `$env:TEMP`, safe under retries) restricted to SYSTEM and Administrators,
+  removed in a `try/finally` on success and on failure; installation fails
+  closed unless `Get-AuthenticodeSignature` reports `Valid` with a Microsoft
+  publisher; `$ProgressPreference = 'SilentlyContinue'` for the download
+- `winget::configure` trust guardrails (issue #40): `source` must be an
+  absolute local path, a UNC share or an `https://` URL (cleartext
+  `http://`, other schemes and relative paths fail compilation); warns when
+  the `winget_version` fact predates `configure test` (needs winget >= 1.6)
+  instead of re-applying silently; new `timeout` parameter (default 1800 s);
+  trust model and prerequisites documented in the README
+- Convergent pins and sources (issue #38): changing `blocking` or `version`
+  of a `winget::pin`, or `url`, `source_type`, `trust_level` or `explicit`
+  of a `winget::source`, now removes and re-adds the object in the same run
+  (explicit ordering, guards re-evaluated after removal) instead of silently
+  doing nothing; unreadable attributes keep presence-only behaviour (pin
+  `source`, source `header`, and fields missing from older winget exports)
+- Stricter `ensure` typing (issue #45): `class winget` and the `cdn` /
+  `github` / `local` install defines accept only `present`, `absent` or a
+  dotted version (typos such as `presnt` fail compilation instead of behaving
+  like `present`); `Winget::Package['ensure']` accepts only the package
+  provider values or a version starting with a digit; setting the deprecated
+  `version` parameter logs a deprecation warning
+- Release pipeline hardening (issue #42): the CHANGELOG entry is validated
+  before the `pdk build` and the Forge publish (a missing entry used to fail
+  the job after an irreversible upload); tagged commit must be reachable from
+  `main`; `workflow_dispatch` dry run validates everything without
+  publishing; tag must still match `metadata.json`
+- OpenVox 8 CI coverage (issue #44): unit matrix entry installing the
+  `openvox` gem (`OPENVOX_GEM_VERSION`) instead of `puppet`, and a Windows
+  acceptance variant with the OpenVox 8 agent; both part of the gate
+- Acceptance as SYSTEM with real operations (issue #43): every `puppet
+  apply` runs as SYSTEM via a one-shot scheduled task and exercises
+  bootstrap, machine-scope install, pin add/no-op/drift/remove, source
+  add/no-op/drift/remove, fact shapes, the `list_upgrades` task, upgrade and
+  removals, with end-state assertions after each apply; plus a nightly
+  scheduled run
+- Windows Server support clarified (issue #46): 2019 is best effort /
+  untested (dropped from `metadata.json` and the class warning list, which
+  now covers 10, 11, 2022, 2025); Microsoft only documents winget for
+  Windows 10, Windows 11 and Windows Server 2025
 
 ### Fixed
 - Bootstrap ordering: `winget::packages`, `winget::sources` and

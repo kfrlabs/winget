@@ -7,6 +7,10 @@ on:
   push:
     branches:
       - main
+  # Nightly run in addition to pull requests (issue #43): absorbs network
+  # flakiness of the live winget operations and catches runner-image drift.
+  schedule:
+    - cron: '0 3 * * *'
 
 permissions:
   contents: read
@@ -51,19 +55,30 @@ jobs:
             (echo '::error::REFERENCE.md is out of date. Run `bundle exec rake strings:generate:reference` and commit the result.' && exit 1)
 
   unit:
-    name: 'Unit (Puppet ${{ matrix.puppet_version }}, Ruby ${{ matrix.ruby }})'
+    name: 'Unit (${{ matrix.name }}, Ruby ${{ matrix.ruby }})'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           # Puppet 8 is the primary target; Puppet 7 is kept for compatibility.
-          - puppet_version: '~> 8.0'
+          - name: 'Puppet ~> 8.0'
+            puppet_version: '~> 8.0'
             ruby: '3.2'
-          - puppet_version: '~> 7.0'
+          - name: 'Puppet ~> 7.0'
+            puppet_version: '~> 7.0'
             ruby: '2.7'
+          # OpenVox 8 (issue #44): the README claims OpenVox 8 compatibility
+          # and metadata.json allows Puppet >= 7 < 9, whose API OpenVox 8
+          # implements; this entry installs the `openvox` gem instead of
+          # `puppet` (see Gemfile OPENVOX_GEM_VERSION) and runs the same
+          # unit suite.
+          - name: 'OpenVox ~> 8.0'
+            openvox_version: '~> 8.0'
+            ruby: '3.2'
     env:
       PUPPET_GEM_VERSION: ${{ matrix.puppet_version }}
+      OPENVOX_GEM_VERSION: ${{ matrix.openvox_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,76 +93,363 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-puppet-${{ matrix.puppet_version }}-ruby-${{ matrix.ruby }}
+          name: coverage-unit-${{ matrix.name }}-ruby-${{ matrix.ruby }}
           path: coverage/
           retention-days: 7
           if-no-files-found: ignore
 
   acceptance:
-    name: 'Acceptance (puppet apply, Windows)'
+    # Live acceptance (issue #43): every `puppet apply` below runs as SYSTEM
+    # through a one-shot scheduled task, because the agent service runs as
+    # SYSTEM and the documented pitfalls (per-user aliases, WindowsApps ACLs,
+    # machine vs user install scope) only show there. The job exercises real
+    # operations — bootstrap, machine-scope install, pin add/no-op/drift/
+    # remove, source add/no-op/drift/remove, facts, tasks, upgrade, removals —
+    # and asserts end state after each apply, so a guard regression (e.g. the
+    # `Select-String` exit-code bug) fails the job instead of silently
+    # skipping. The `openvox` variant (issue #44) runs the same steps with
+    # the OpenVox 8 agent.
+    name: 'Acceptance (${{ matrix.agent }} agent, apply as SYSTEM, Windows)'
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - agent: puppet
+            install: choco
+          - agent: openvox
+            install: msi
+            # Pinned OpenVox 8 agent (issue #44). Bump to a newer 8.x when
+            # available: https://downloads.voxpupuli.org/windows/openvox8/
+            msi_url: https://downloads.voxpupuli.org/windows/openvox8/openvox-agent-8.31.0-x64.msi
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Puppet agent
+        if: matrix.install == 'choco'
+        shell: powershell
+        run: choco install puppet-agent -y --no-progress
+      - name: Install OpenVox agent
+        if: matrix.install == 'msi'
         shell: powershell
         run: |
-          choco install puppet-agent -y --no-progress
-          'C:\Program Files\Puppet Labs\Puppet\bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - name: Check Puppet version
+          Invoke-WebRequest -UseBasicParsing -Uri '${{ matrix.msi_url }}' -OutFile C:\Temp\openvox-agent.msi
+          Start-Process msiexec.exe -ArgumentList '/i C:\Temp\openvox-agent.msi /qn /norestart' -Wait
+      - name: Resolve agent paths and write SYSTEM helpers
         shell: powershell
-        run: puppet --version
+        run: |
+          $candidates = @(
+            'C:\Program Files\Puppet Labs\Puppet\bin\puppet.bat',
+            'C:\Program Files\OpenVox Labs\OpenVox\puppet\bin\puppet.bat'
+          )
+          $puppet = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $puppet) {
+            $puppet = (Get-ChildItem -Path 'C:\Program Files' -Filter 'puppet.bat' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          }
+          if (-not $puppet) { Write-Error 'No puppet.bat found after agent install.'; exit 1 }
+          $binDir = Split-Path $puppet
+          $binDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & $puppet --version
+          $modulePath = ((& $puppet config print modulepath) -split ';' | Select-Object -First 1).Trim()
+          if (-not $modulePath) { Write-Error 'Could not resolve the agent modulepath.'; exit 1 }
+          "PUPPET_BIN=$puppet" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "MODULE_PATH=$modulePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          New-Item -ItemType Directory -Force -Path C:\Temp | Out-Null
+          @"
+          `$PuppetBin = '$puppet'
+          `$ModulePath = '$modulePath'
+          "@ | Set-Content -Encoding ascii C:\Temp\acceptance_env.ps1
+          @'
+          # Applies a manifest as SYSTEM with --detailed-exitcodes.
+          param([Parameter(Mandatory = $true)][string]$Manifest, [switch]$AllowChanges)
+          . C:\Temp\acceptance_env.ps1
+          & $PuppetBin apply --detailed-exitcodes --modulepath $ModulePath $Manifest
+          $code = $LASTEXITCODE
+          if ($AllowChanges) {
+            if ($code -eq 0 -or $code -eq 2) { exit 0 } else { exit $code }
+          }
+          if ($code -eq 0) { exit 0 } else { Write-Error "Expected idempotent apply (exit 0), got $code."; exit $code }
+          '@ | Set-Content -Encoding ascii C:\Temp\apply_manifest.ps1
+          @'
+          # Runs a payload .ps1 as SYSTEM via a one-shot scheduled task and
+          # exits with the payload exit code (LastTaskResult).
+          param([Parameter(Mandatory = $true)][string]$ScriptPath, [string]$ScriptArgs = '')
+          $taskName = 'winget-acceptance-system'
+          Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+          $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" $ScriptArgs"
+          $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+          Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
+          Start-ScheduledTask -TaskName $taskName
+          $deadline = (Get-Date).AddMinutes(25)
+          do {
+            Start-Sleep -Seconds 5
+            $state = (Get-ScheduledTask -TaskName $taskName).State
+            if ((Get-Date) -gt $deadline) { throw 'Timed out waiting for the SYSTEM task.' }
+          } while ($state -ne 'Ready')
+          $code = (Get-ScheduledTaskInfo -TaskName $taskName).LastTaskResult
+          Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+          exit $code
+          '@ | Set-Content -Encoding ascii C:\Temp\Invoke-AsSystem.ps1
       - name: Stage module into the agent modulepath
         # The repo root is the module; Puppet expects it under a directory
         # named after the module (`winget`, not `kfrlabs-winget`).
         shell: powershell
         run: |
-          $ModuleDir = 'C:\ProgramData\PuppetLabs\puppet\etc\modules\winget'
+          $ModuleDir = Join-Path '${{ env.MODULE_PATH }}' 'winget'
           New-Item -ItemType Directory -Force -Path $ModuleDir | Out-Null
           Copy-Item -Path "$env:GITHUB_WORKSPACE\*" -Destination $ModuleDir -Recurse -Force -Exclude '.git'
           Get-ChildItem $ModuleDir | Select-Object Name
-      - name: Write acceptance manifest
+      - name: Probe the SYSTEM execution context
+        # whoami must report SYSTEM: every apply below runs in that context,
+        # where the agent service lives (per-user aliases and user-scope
+        # installs are invisible there).
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path C:\Temp | Out-Null
-          @"
-          class { 'winget':
-            ensure => present,
-          }
-          "@ | Set-Content -Encoding ascii C:\Temp\winget_acceptance.pp
-          Get-Content C:\Temp\winget_acceptance.pp
-      - name: Apply bootstrap (run 1, changes allowed)
-        shell: powershell
-        run: |
-          puppet apply --detailed-exitcodes --modulepath 'C:\ProgramData\PuppetLabs\puppet\etc\modules' C:\Temp\winget_acceptance.pp
-          $code = $LASTEXITCODE
-          if ($code -eq 0 -or $code -eq 2) { exit 0 } else { exit $code }
-      - name: Apply bootstrap again (run 2, must be idempotent)
-        shell: powershell
-        run: |
-          puppet apply --detailed-exitcodes --modulepath 'C:\ProgramData\PuppetLabs\puppet\etc\modules' C:\Temp\winget_acceptance.pp
-          $code = $LASTEXITCODE
-          if ($code -eq 0) { exit 0 } else { Write-Error "Second apply exited with $code, expected 0 (idempotent)."; exit $code }
-      - name: winget CLI is functional
-        shell: powershell
-        run: winget --version
-      - name: Provider loads in noop (no changes made)
-        # Compiles a catalog with a winget package and evaluates it noop:
-        # proves the provider is suitable on the runner without installing
-        # anything (query/latest are read-only under --noop).
+          @'
+          $who = whoami
+          if ($who -notmatch 'system') { Write-Error "Expected SYSTEM context, got: $who"; exit 1 }
+          '@ | Set-Content -Encoding ascii C:\Temp\probe_system.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\probe_system.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Write bootstrap manifest
         shell: powershell
         run: |
           @"
           class { 'winget':
             ensure => present,
           }
-          package { 'Git.Git':
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_bootstrap.pp
+      - name: Apply bootstrap as SYSTEM (run 1, changes allowed)
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_bootstrap.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Apply bootstrap as SYSTEM again (run 2, must be idempotent)
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_bootstrap.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: winget CLI executes as SYSTEM
+        # The bare alias is unavailable as SYSTEM and some images cannot
+        # execute winget as SYSTEM at all (STATUS_DLL_NOT_FOUND): fail fast
+        # with a clear message instead of cascading failures below.
+        shell: powershell
+        run: |
+          @'
+          $winget = (Get-ChildItem -Path 'C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*__8wekyb3d8bbwe\winget.exe' -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if (-not $winget) { Write-Error 'winget.exe not found under WindowsApps after bootstrap.'; exit 1 }
+          & $winget --version
+          if ($LASTEXITCODE -ne 0) { Write-Error "winget.exe does not execute as SYSTEM (exit $LASTEXITCODE)."; exit $LASTEXITCODE }
+          '@ | Set-Content -Encoding ascii C:\Temp\probe_winget.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\probe_winget.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install a package machine-scope as SYSTEM (changes, then idempotent)
+        # 7-Zip: small, stable, silent. The second apply must exit 0, which
+        # proves the provider sees the SYSTEM-wide install (a user-scope
+        # install would be invisible to `winget list` as SYSTEM and the
+        # second apply would report changes again).
+        shell: powershell
+        run: |
+          @"
+          class { 'winget':
+            ensure => present,
+          }
+          package { '7zip.7zip':
             ensure   => present,
             provider => winget,
+            scope    => machine,
           }
-          Class['winget'] -> Package['Git.Git']
-          "@ | Set-Content -Encoding ascii C:\Temp\winget_provider_noop.pp
-          puppet apply --noop --modulepath 'C:\ProgramData\PuppetLabs\puppet\etc\modules' C:\Temp\winget_provider_noop.pp
+          Class['winget'] -> Package['7zip.7zip']
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_install.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_install.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_install.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Pin add / no-op / drift to blocking / remove as SYSTEM
+        # Exercises winget::pin end to end, including the issue #38 drift
+        # convergence (plain -> blocking must converge in one run).
+        shell: powershell
+        run: |
+          @"
+          class { 'winget':
+            ensure => present,
+          }
+          winget::pin { '7zip.7zip':
+            ensure => present,
+          }
+          Class['winget'] -> Winget::Pin['7zip.7zip']
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_pin.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_pin.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_pin.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          . C:\Temp\acceptance_env.ps1
+          $winget = (Get-ChildItem -Path 'C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*__8wekyb3d8bbwe\winget.exe' | Select-Object -First 1).FullName
+          $raw = & $winget pin list --id '7zip.7zip' --exact --disable-interactivity
+          if (-not ($raw | Select-String -Quiet -SimpleMatch '7zip.7zip')) { Write-Error 'Pin for 7zip.7zip missing after add.'; exit 1 }
+          '@ | Set-Content -Encoding ascii C:\Temp\assert_pin_present.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\assert_pin_present.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @"
+          class { 'winget':
+            ensure => present,
+          }
+          winget::pin { '7zip.7zip':
+            ensure   => present,
+            blocking => true,
+          }
+          Class['winget'] -> Winget::Pin['7zip.7zip']
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_pin_blocking.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_pin_blocking.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_pin_blocking.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          . C:\Temp\acceptance_env.ps1
+          $winget = (Get-ChildItem -Path 'C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*__8wekyb3d8bbwe\winget.exe' | Select-Object -First 1).FullName
+          $raw = & $winget pin list --id '7zip.7zip' --exact --disable-interactivity
+          if (-not ($raw | Select-String -Quiet -Pattern '\sBlocking(\s|$)')) { Write-Error 'Blocking pin for 7zip.7zip missing after drift.'; exit 1 }
+          '@ | Set-Content -Encoding ascii C:\Temp\assert_pin_blocking.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\assert_pin_blocking.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @"
+          class { 'winget':
+            ensure => present,
+          }
+          winget::pin { '7zip.7zip':
+            ensure => absent,
+          }
+          Class['winget'] -> Winget::Pin['7zip.7zip']
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_pin_absent.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_pin_absent.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Source add / no-op / drift URL / remove as SYSTEM
+        # Exercises winget::source end to end, including the issue #38 drift
+        # convergence (changed URL must converge in one run).
+        shell: powershell
+        run: |
+          @"
+          class { 'winget':
+            ensure => present,
+          }
+          winget::source { 'acceptance-probe':
+            ensure => present,
+            url    => 'https://cdn.winget.microsoft.com/cache',
+          }
+          Class['winget'] -> Winget::Source['acceptance-probe']
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_source.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @"
+          class { 'winget':
+            ensure => present,
+          }
+          winget::source { 'acceptance-probe':
+            ensure => present,
+            url    => 'https://cdn.winget.microsoft.com/fonts',
+          }
+          Class['winget'] -> Winget::Source['acceptance-probe']
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_source_drift.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source_drift.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source_drift.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @"
+          class { 'winget':
+            ensure => present,
+          }
+          winget::source { 'acceptance-probe':
+            ensure => absent,
+          }
+          Class['winget'] -> Winget::Source['acceptance-probe']
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_source_absent.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_source_absent.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Facts have the expected shapes as SYSTEM
+        shell: powershell
+        run: |
+          @'
+          class { 'winget':
+            ensure => present,
+          }
+          if $facts['winget_path'] == undef { fail('winget_path fact is undef') }
+          if $facts['winget_version'] !~ /^\d+\.\d+/ { fail('winget_version fact has an unexpected shape') }
+          if !($facts['winget_pins'] =~ Array) { fail('winget_pins fact is not an array') }
+          '@ | Set-Content -Encoding ascii C:\Temp\winget_facts.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_facts.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Task smoke test (list_upgrades) as SYSTEM
+        shell: powershell
+        run: |
+          @'
+          . C:\Temp\acceptance_env.ps1
+          $task = Join-Path $ModulePath 'winget\tasks\list_upgrades.ps1'
+          $out = '{}' | & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $task
+          if ($LASTEXITCODE -ne 0) { Write-Error "list_upgrades task failed with exit ${LASTEXITCODE}: $out"; exit $LASTEXITCODE }
+          try { $parsed = $out | ConvertFrom-Json -ErrorAction Stop } catch { Write-Error "list_upgrades output is not JSON: $out"; exit 1 }
+          if ($null -eq $parsed.upgrades) { Write-Error "list_upgrades output has no 'upgrades' key: $out"; exit 1 }
+          '@ | Set-Content -Encoding ascii C:\Temp\task_smoke.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\task_smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upgrade smoke test (ensure latest) as SYSTEM
+        shell: powershell
+        run: |
+          @"
+          class { 'winget':
+            ensure => present,
+          }
+          package { '7zip.7zip':
+            ensure   => latest,
+            provider => winget,
+          }
+          Class['winget'] -> Package['7zip.7zip']
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_upgrade.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_upgrade.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_upgrade.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Remove the package as SYSTEM (must converge, then hold)
+        shell: powershell
+        run: |
+          @"
+          class { 'winget':
+            ensure => present,
+          }
+          package { '7zip.7zip':
+            ensure   => absent,
+            provider => winget,
+          }
+          Class['winget'] -> Package['7zip.7zip']
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_remove_pkg.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_remove_pkg.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_remove_pkg.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          . C:\Temp\acceptance_env.ps1
+          $winget = (Get-ChildItem -Path 'C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*__8wekyb3d8bbwe\winget.exe' | Select-Object -First 1).FullName
+          $raw = & $winget list --id '7zip.7zip' --exact --disable-interactivity
+          if ($raw | Select-String -Quiet -SimpleMatch '7zip.7zip') { Write-Error '7zip.7zip still listed after ensure => absent.'; exit 1 }
+          '@ | Set-Content -Encoding ascii C:\Temp\assert_pkg_absent.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\assert_pkg_absent.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Remove winget itself as SYSTEM (last, proves ensure absent)
+        shell: powershell
+        run: |
+          @"
+          class { 'winget':
+            ensure => absent,
+          }
+          "@ | Set-Content -Encoding ascii C:\Temp\winget_absent.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_absent.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { Write-Error 'App Installer still present after class absent.'; exit 1 }
+          '@ | Set-Content -Encoding ascii C:\Temp\assert_winget_absent.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\assert_winget_absent.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   build:
@@ -161,11 +463,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1
-        with:
-          ruby-version: '3.2'
-          bundler-cache: true
       - name: Install PDK
         # `pdk build` needs the `pdk` binary, which the runner image does not ship.
         run: |

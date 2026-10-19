@@ -14,9 +14,12 @@
 #
 # @param ensure
 #   Desired state: 'present', 'absent', or a specific version string.
+#   Anything else (typos included) fails compilation.
 #
 # @param version
-#   Specific version to install (e.g., '1.8.2391'). Defaults to latest release.
+#   DEPRECATED: use `ensure` instead. Specific version to install (e.g.,
+#   '1.8.2391'). Kept for backward compatibility (still honored); setting it
+#   logs a deprecation warning. Defaults to latest release.
 #
 # @param proxy
 #   Proxy URL for the download.
@@ -28,12 +31,15 @@
 #   Seconds between retry attempts. Default: 10.
 #
 define winget::install::github (
-  String $ensure           = 'present',
+  Winget::Ensure $ensure = 'present',
   Optional[String] $version = undef,
   Optional[String] $proxy  = undef,
   Integer $retry_count     = 3,
   Integer $retry_interval  = 10
 ) {
+  if $version {
+    warning("winget::install::github[${title}]: the version parameter is deprecated, use ensure => '<version>' instead (still honored for backward compatibility).")
+  }
   if $version and $version =~ /^\d+(\.\d+)+$/ {
     $real_ensure = $version
   } else {
@@ -82,8 +88,17 @@ define winget::install::github (
     # `Add-AppxPackage` is flaky under the SYSTEM account, so fall back to
     # `Add-AppxProvisionedPackage -Online -SkipLicense`, which stages the
     # package for all users without a Store license.
+    #
+    # Hardening (issue #39): the bundle is downloaded into a per-run unique
+    # directory (no fixed name in the shared `$env:TEMP`, safe under retries
+    # and concurrent `cdn`/`github` attempts), locked down to SYSTEM and
+    # Administrators, and removed in a `finally` block on success and on
+    # failure. Before installing, the Authenticode signature must be `Valid`
+    # with a Microsoft publisher, otherwise the run fails closed.
+    # `$ProgressPreference = 'SilentlyContinue'` avoids the extremely slow
+    # progress bar of Windows PowerShell 5.1 `Invoke-WebRequest`.
     exec { "winget_install_github_${title}":
-      command     => "${powershell} -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-WebRequest -UseBasicParsing -Uri '${download_url}' -OutFile (Join-Path \$env:TEMP 'winget.msixbundle'); try { Add-AppxPackage -Path (Join-Path \$env:TEMP 'winget.msixbundle') -ErrorAction Stop } catch { Add-AppxProvisionedPackage -Online -PackagePath (Join-Path \$env:TEMP 'winget.msixbundle') -SkipLicense }\"",
+      command     => "${powershell} -NoProfile -ExecutionPolicy Bypass -Command \"\$ProgressPreference = 'SilentlyContinue'; \$workDir = Join-Path \$env:TEMP ('winget-install-' + [guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Path \$workDir -Force | Out-Null; \$acl = Get-Acl -Path \$workDir; \$acl.SetAccessRuleProtection(\$true, \$false); \$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule('NT AUTHORITY\\SYSTEM', 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))); \$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule('BUILTIN\\Administrators', 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))); Set-Acl -Path \$workDir -AclObject \$acl; try { \$bundle = Join-Path \$workDir 'winget.msixbundle'; Invoke-WebRequest -UseBasicParsing -Uri '${download_url}' -OutFile \$bundle; \$sig = Get-AuthenticodeSignature -FilePath \$bundle; if ((\$sig.Status -ne 'Valid') -or (\$sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation')) { throw ('winget bundle signature check failed (Status: ' + \$sig.Status + ')') }; try { Add-AppxPackage -Path \$bundle -ErrorAction Stop } catch { Add-AppxProvisionedPackage -Online -PackagePath \$bundle -SkipLicense } } finally { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue \$workDir }\"",
       timeout     => 600,
       tries       => $retry_count,
       try_sleep   => $retry_interval,

@@ -25,6 +25,12 @@ describe 'winget::packages' do
         end
       end
 
+      context "with a typo'd ensure (issue #45)" do
+        let(:params) { { entries: { 'Git.Git' => { 'ensure' => 'presnt' } } } }
+
+        it { expect { catalogue }.to raise_error(Puppet::Error, %r{presnt}) }
+      end
+
       context 'with structured install parameters' do
         let(:params) do
           {
