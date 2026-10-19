@@ -1168,11 +1168,11 @@ show there:
 9. `ensure => latest` on the package (changes, then idempotent), then
    `ensure => absent` for the package (converges, then holds; `winget list`
    must no longer show the ID), and finally `class { 'winget': ensure =>
-   absent }` (proves bootstrap removal where the image allows it;
-   inbox-protected App Installer — `SignatureKind` `System`, e.g. stock
-   Server 2025 images — cannot be removed by Windows and the step skips
-   with an explicit message instead of failing; runs last because nothing
-   after it needs winget).
+   absent }` (contract: converge where the image allows removal, otherwise
+   fail closed with the platform error — a provisioned bundle whose
+   registered instance refuses DeStage, `0x80070032`, is accepted as the
+   documented fail-closed outcome, never as a silent skip; runs last
+   because nothing after it needs winget).
 10. Every state-changing step is followed by an end-state assertion, so a
     guard regression (e.g. the `Select-String` exit-code bug, where the guard
     always succeeds and the exec never runs) fails the job instead of

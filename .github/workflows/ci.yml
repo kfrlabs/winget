@@ -473,14 +473,13 @@ jobs:
           '@ | Set-Content -Encoding ascii C:\Temp\assert_pkg_absent.ps1
           powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\assert_pkg_absent.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Remove winget itself as SYSTEM (last, proves ensure absent)
-        # Removal is only possible when Windows allows it: on images where
-        # App Installer is an inbox system component (SignatureKind System,
-        # e.g. stock Server 2025 images) Windows blocks the DeStage with
-        # 0x80070032 and no cmdlet can remove it. The probe below detects
-        # that case and skips the live removal with an explicit message
-        # (catalog correctness stays covered by rspec); otherwise the
-        # removal is applied and asserted absent.
+      - name: Remove winget itself as SYSTEM (last, contract is converge or fail closed)
+        # The module contract for `ensure => absent` is: converge (instance
+        # gone) where Windows allows removal, otherwise fail closed with the
+        # platform error (never silently skip). The GH image carries a
+        # provisioned bundle whose registered instance refuses DeStage
+        # (0x80070032), so both outcomes are accepted here — anything else
+        # (or a silent no-op) fails the job. Diagnostics are always printed.
         shell: powershell
         run: |
           @"
@@ -490,35 +489,38 @@ jobs:
           "@ | Set-Content -Encoding ascii C:\Temp\winget_absent.pp
           @'
           $pkg = Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller | Select-Object -First 1
-          if (-not $pkg) { $kind = 'ABSENT' } else { $kind = $pkg.SignatureKind }
-          Set-Content -Encoding ascii C:\Temp\winget_kind.txt $kind
-          $diag = @()
-          $diag += "SignatureKind=$kind"
           if ($pkg) {
-            $diag += ($pkg | Format-List Name, Version, PackageFullName, PackageFamilyName, SignatureKind, IsFramework, IsResourcePackage, IsBundle, InstallLocation, Status | Out-String)
+            $pkg | Format-List Name, Version, PackageFullName, PackageFamilyName, SignatureKind, IsFramework, IsBundle, InstallLocation, Status | Out-String | Set-Content -Encoding ascii C:\Temp\winget_diag.txt
+          } else {
+            Set-Content -Encoding ascii C:\Temp\winget_diag.txt 'no instance registered'
           }
           $prov = @(Get-AppxProvisionedPackage -Online | Where-Object { $_.PackageName -like '*DesktopAppInstaller*' })
-          $diag += ("ProvisionedCount=" + $prov.Count)
-          foreach ($p in $prov) { $diag += ("Provisioned=" + $p.PackageName) }
-          Set-Content -Encoding ascii C:\Temp\winget_diag.txt $diag
+          Add-Content -Encoding ascii C:\Temp\winget_diag.txt ("ProvisionedCount=" + $prov.Count)
+          foreach ($p in $prov) { Add-Content -Encoding ascii C:\Temp\winget_diag.txt ("Provisioned=" + $p.PackageName) }
           '@ | Set-Content -Encoding ascii C:\Temp\probe_kind.ps1
           powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\probe_kind.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $kind = (Get-Content C:\Temp\winget_kind.txt).Trim()
           Write-Host '--- App Installer diagnostics (SYSTEM) ---'
           Get-Content C:\Temp\winget_diag.txt
           Write-Host '--- end of diagnostics ---'
-          if ($kind -eq 'System' -or $kind -eq 'ABSENT') {
-            Write-Host "App Installer is inbox-protected (SignatureKind=$kind) or already absent: live removal skipped (documented Windows limitation); catalog correctness is covered by rspec."
-            exit 0
-          }
           powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_absent.pp' -AllowChanges"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $code = $LASTEXITCODE
+          if ($code -eq 0 -or $code -eq 2) {
           @'
           if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { Write-Error 'App Installer still present after class absent.'; exit 1 }
           '@ | Set-Content -Encoding ascii C:\Temp\assert_winget_absent.ps1
-          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\assert_winget_absent.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\assert_winget_absent.ps1
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host 'Live removal converged: App Installer is absent.'
+            exit 0
+          }
+          $out = Get-Content C:\Temp\as_system_task.log -Raw
+          if ($out -match '0x80070032') {
+            Write-Host 'Windows blocks the DeStage on this image (0x80070032, provisioned bundle with a registered instance that refuses removal): the exec failed closed as specified — documented platform limitation, not a silent skip.'
+            exit 0
+          }
+          Write-Error "Absent apply failed unexpectedly (exit $code) without the known platform block."
+          exit $code
 
   build:
     name: 'Build module package (pdk build)'

@@ -173,10 +173,10 @@ Data type: `Winget::Ensure`
 Desired state of winget: 'present', 'absent', or a specific version
 string (e.g., '1.8.2391'). Anything else (including typos such as
 'presnt', 'installed' or 'latest', which have no distinct meaning for the
-presence-based bootstrap) fails compilation. Note: on images where App
-Installer is an inbox system component (SignatureKind `System`, e.g.
-stock Windows Server 2025 images) Windows blocks the removal
-(`0x80070032`) and the run fails closed instead of silently keeping it.
+presence-based bootstrap) fails compilation. Note: removal can be
+blocked by Windows itself (`0x80070032`, e.g. a provisioned bundle whose
+registered instance refuses DeStage on stock images): the run then fails
+closed instead of silently keeping winget.
 
 Default value: `'present'`
 
