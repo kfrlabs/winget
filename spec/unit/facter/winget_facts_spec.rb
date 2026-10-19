@@ -241,6 +241,7 @@ RSpec.describe PuppetX::Winget::Facts do
 
     context 'when upgrades are available' do
       before(:each) do
+        allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return('true')
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
         allow(PuppetX::Winget::Runner).to receive(:run).and_return(
@@ -282,6 +283,7 @@ RSpec.describe PuppetX::Winget::Facts do
 
     context 'with an explicit path override' do
       before(:each) do
+        allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return('true')
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
         allow(PuppetX::Winget::Runner).to receive(:run).and_return(
           Puppet::Util::Execution::ProcessOutput.new(upgrade_output, 0),
@@ -291,6 +293,41 @@ RSpec.describe PuppetX::Winget::Facts do
       it 'uses the given path without calling the resolver' do
         expect(PuppetX::Winget::PathResolver).not_to receive(:winget_path)
         expect(described_class.winget_upgrades(winget_exe)).to eq([
+          { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+          { 'id' => 'Notepad++.Notepad++', 'current_version' => '8.5.4', 'available_version' => '8.6.0' },
+        ])
+      end
+    end
+
+    context 'when the opt-in is unset (default)' do
+      before(:each) do
+        allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return(nil)
+        allow(described_class).to receive(:winget_path).and_return(winget_exe)
+        allow(File).to receive(:exist?).with(winget_exe).and_return(true)
+      end
+
+      it 'returns [] without shelling out' do
+        expect(PuppetX::Winget::Runner).not_to receive(:run)
+        expect(described_class.winget_upgrades(winget_exe)).to eq([])
+      end
+    end
+
+    context 'with force: true (on-demand function path)' do
+      before(:each) do
+        allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return(nil)
+        allow(File).to receive(:exist?).with(winget_exe).and_return(true)
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
+          Puppet::Util::Execution::ProcessOutput.new(upgrade_output, 0),
+        )
+      end
+
+      it 'enumerates without the opt-in and keeps source agreements accepted' do
+        expect(PuppetX::Winget::Runner).to receive(:run).with(
+          [winget_exe, 'upgrade', '--accept-source-agreements', '--disable-interactivity']
+        ).and_return(
+          Puppet::Util::Execution::ProcessOutput.new(upgrade_output, 0),
+        )
+        expect(described_class.winget_upgrades(winget_exe, force: true)).to eq([
           { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
           { 'id' => 'Notepad++.Notepad++', 'current_version' => '8.5.4', 'available_version' => '8.6.0' },
         ])
@@ -311,22 +348,22 @@ RSpec.describe PuppetX::Winget::Facts do
   end
 
   describe '.upgrades_enabled?' do
-    it 'is enabled by default' do
+    it 'is disabled by default (opt-in inventory)' do
       allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return(nil)
-      expect(described_class.upgrades_enabled?).to be true
+      expect(described_class.upgrades_enabled?).to be false
     end
 
-    it 'treats false-like values as disabled' do
-      %w[false 0 no off FALSE No OFF].each do |value|
+    it 'treats true-like values as enabled' do
+      ['true', '1', 'yes', 'on', 'TRUE', 'Yes', 'ON', ' true '].each do |value|
         allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return(value)
-        expect(described_class.upgrades_enabled?).to be(false), "expected #{value.inspect} to disable the fact"
+        expect(described_class.upgrades_enabled?).to be(true), "expected #{value.inspect} to enable the fact"
       end
     end
 
-    it 'treats other values as enabled' do
-      %w[true 1 yes].each do |value|
+    it 'treats other values as disabled' do
+      %w[false 0 no off FALSE No OFF].each do |value|
         allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return(value)
-        expect(described_class.upgrades_enabled?).to be(true), "expected #{value.inspect} to keep the fact enabled"
+        expect(described_class.upgrades_enabled?).to be(false), "expected #{value.inspect} to disable the fact"
       end
     end
   end
@@ -696,6 +733,7 @@ RSpec.describe PuppetX::Winget::Facts do
 
     context 'when upgrades are available' do
       before(:each) do
+        allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return('true')
         allow(described_class).to receive(:winget_path).and_return(winget_exe)
         allow(File).to receive(:exist?).with(winget_exe).and_return(true)
         allow(PuppetX::Winget::Runner).to receive(:run).and_return(
@@ -821,6 +859,7 @@ RSpec.describe PuppetX::Winget::Facts do
     end
 
     before(:each) do
+      allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return('true')
       allow(described_class).to receive(:winget_path).and_return(winget_exe)
       allow(File).to receive(:exist?).with(winget_exe).and_return(true)
     end
@@ -856,6 +895,30 @@ RSpec.describe PuppetX::Winget::Facts do
       expect(described_class.winget_upgrades).to eq([
         { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
       ])
+    end
+
+    it 'keeps forced and gated caches separate on the default path' do
+      output = <<~OUTPUT
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+      OUTPUT
+      rows = [{ 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' }]
+      allow(PuppetX::Winget::Runner).to receive(:run).and_return(
+        Puppet::Util::Execution::ProcessOutput.new(output, 0),
+      )
+      described_class.reset!
+
+      # Gated fact disabled by default: no shell, [].
+      allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return(nil)
+      expect(described_class.winget_upgrades).to eq([])
+      # Forced on-demand enumeration bypasses the gate despite the prior gated nil.
+      expect(described_class.winget_upgrades(nil, force: true)).to eq(rows)
+      # Gated fact is still disabled (no leak from the forced cache).
+      expect(PuppetX::Winget::Runner).not_to receive(:run)
+      expect(described_class.winget_upgrades).to eq([])
+      expect(described_class.upgrade_output(nil, force: true)).not_to be_nil
+      expect(described_class.upgrade_output).to be_nil
     end
   end
 end

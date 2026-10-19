@@ -9,12 +9,16 @@ require 'puppet_x/winget/path_resolver'
 # can be unit tested without depending on the Facter confine context.
 # Helpers never raise: they return nil/[] when winget is absent or when any
 # error occurs. Note `winget_upgrades` shells out
-# to `winget upgrade` (source round-trips, a few seconds) with a single
-# memoized invocation per process, while `winget_pins` is a fast local
-# `winget pin list` query. To avoid paying the upgrade cost on every agent
-# run, either cache the fact with a TTL in facter.conf
-# (`facts: { ttls: [{ winget_upgrades: "7 days" }] }`) or opt out entirely with
-# `WINGET_UPGRADES_ENABLED=false` (the upgrade fact then returns []).
+# to `winget upgrade` (source round-trips, a few seconds) with memoized
+# output per process and per mode (forced vs. gated, see {.upgrade_output}).
+# It runs on demand only: the
+# `winget::upgrades` function (called by `Class['winget::upgrade']`) forces
+# an uncached on-demand enumeration (no per-process memoization, so one
+# server process never reuses node A's rows for node B),
+# while the `winget_upgrades` fact itself is opt-in
+# inventory (`WINGET_UPGRADES_ENABLED=true`, disabled by default so agent
+# runs that do not declare the class never pay the cost). `winget_pins` is
+# a fast local `winget pin list` query and stays always enabled.
 # rubocop:disable Style/ClassAndModuleChildren
 module PuppetX
   module Winget
@@ -38,7 +42,8 @@ module PuppetX
       class << self
         # Clear memoized command output (primarily for testing).
         def reset!
-          @upgrade_output = nil
+          @upgrade_output_forced = nil
+          @upgrade_output_gated = nil
           @pins_output = nil
         end
 
@@ -83,40 +88,80 @@ module PuppetX
           nil
         end
 
-        # Whether the expensive `winget_upgrades`
-        # fact may run. Opt out by setting `WINGET_UPGRADES_ENABLED` to a
-        # false-like value (`false`, `0`, `no`, `off`). Anything else
-        # (including unset) keeps the fact enabled for backward
-        # compatibility.
-        # @return [Boolean] False when the upgrade fact must return [] without shelling out
+        # Whether the opt-in `winget_upgrades` inventory fact may run.
+        # Disabled by default so agent runs that do not declare
+        # `Class['winget::upgrade']` never pay for a `winget upgrade`
+        # source round-trip: set `WINGET_UPGRADES_ENABLED` to a true-like
+        # value (`true`, `1`, `yes`, `on`) to keep the fact populated for
+        # PuppetDB inventory. Anything else (including unset) disables the
+        # fact (it returns `[]` without shelling out).
+        # `Class['winget::upgrade']` does not need the fact: it enumerates
+        # on demand through the `winget::upgrades` function, falling back
+        # to the fact rows for server-side compilation.
+        # @return [Boolean] True only when the inventory fact may shell out
         def upgrades_enabled?
           value = ENV.fetch('WINGET_UPGRADES_ENABLED', nil)
-          return true if value.nil?
+          return false if value.nil?
 
-          !value.strip.match?(%r{\A(false|0|no|off)\z}i)
+          value.to_s.strip.match?(%r{\A(true|1|yes|on)\z}i)
         rescue StandardError
-          true
+          false
         end
 
-        # Raw `winget upgrade` output, memoized per process so the
-        # `winget_upgrades` fact only shells out once.
+        # Raw `winget upgrade` output, memoized per process and per mode so the
+        # `winget_upgrades` fact only shells out once. Forced (on-demand
+        # function) and gated (opt-in fact) rows use separate caches: a
+        # forced enumeration must never satisfy a later gated fact call when
+        # the inventory gate is disabled, and a gated `nil` (disabled/absent)
+        # must never satisfy a later forced call. Gated hits re-check
+        # {.upgrades_enabled?} so toggling the opt-in off hides stale rows.
         # Only memoized for the default (nil) path: explicit path
         # overrides (used in tests) always run fresh.
+        # Per-process memoization is safe on agents (one node per process)
+        # but not on Puppet Server, where one server process compiles
+        # catalogs for many nodes: cached forced output from node A must
+        # never satisfy node B. Server-side callers must therefore use the
+        # uncached {.run_upgrade} per compilation (as the `winget::upgrades`
+        # function does) or call {.reset!} once per catalog, never the
+        # memoized forced cache across nodes.
+        # Cost note: when the opt-in fact is enabled on an agent that also
+        # declares `Class['winget::upgrade']`, the agent pays for two
+        # `winget upgrade` runs per agent run (one gated fact, one on-demand
+        # function enumeration; separate caches). Cache the fact with a TTL
+        # or leave it disabled (the class still enumerates on demand) to
+        # avoid the double cost.
         # @param path [String, nil] Optional override for the winget path (testing)
+        # @param force [Boolean] Bypass the opt-in inventory gate (function path)
         # @return [String, nil] Raw command output, or nil when disabled/absent/failed
-        def upgrade_output(path = nil)
-          return run_upgrade(path) unless path.nil?
+        def upgrade_output(path = nil, force: false)
+          return run_upgrade(path, force: force) unless path.nil?
 
-          @upgrade_output = run_upgrade(nil) if @upgrade_output.nil?
-          @upgrade_output
+          if force
+            @upgrade_output_forced = run_upgrade(nil, force: true) if @upgrade_output_forced.nil?
+            @upgrade_output_forced
+          else
+            return nil unless upgrades_enabled?
+
+            @upgrade_output_gated = run_upgrade(nil, force: false) if @upgrade_output_gated.nil?
+            @upgrade_output_gated
+          end
         end
 
         # Single uncached `winget upgrade` run. Never raises (timeout returns
         # nil like any other failure so a hung winget cannot stall the agent).
+        # The inventory gate ({.upgrades_enabled?}) is skipped when `force`
+        # is true: the `winget::upgrades` function enumerates on demand for
+        # `Class['winget::upgrade']`, so the class works without the opt-in
+        # fact. `--accept-source-agreements` is kept deliberately: without
+        # it winget can prompt (or stall where nothing answers), reintroducing
+        # the hang this module guards against with `PuppetX::Winget::Runner`
+        # timeouts; the agreements accepted on enumeration match the provider
+        # and task behavior for the upgrades the class then applies.
         # @param path [String, nil] Optional override for the winget path (testing)
+        # @param force [Boolean] Bypass the opt-in inventory gate (function path)
         # @return [String, nil] Raw command output, or nil when disabled/absent/failed
-        def run_upgrade(path)
-          return nil unless upgrades_enabled?
+        def run_upgrade(path, force: false)
+          return nil unless force || upgrades_enabled?
 
           winget = path || winget_path
           return nil unless winget && File.exist?(winget)
@@ -125,16 +170,19 @@ module PuppetX
           output = PuppetX::Winget::Runner.run(
             [winget, 'upgrade', '--accept-source-agreements', '--disable-interactivity'],
           )
+          return nil unless output.exitstatus.zero?
+
           normalize_output(output.to_s)
         rescue StandardError
           nil
         end
 
         # @param path [String, nil] Optional override for the winget path (testing)
+        # @param force [Boolean] Bypass the opt-in inventory gate (function path)
         # @return [Array<Hash>] Upgrade rows with 'id', 'current_version' and
         #   'available_version' keys ([] when absent/error/disabled)
-        def winget_upgrades(path = nil)
-          parse_winget_upgrade(upgrade_output(path))
+        def winget_upgrades(path = nil, force: false)
+          parse_winget_upgrade(upgrade_output(path, force: force))
         rescue StandardError
           []
         end

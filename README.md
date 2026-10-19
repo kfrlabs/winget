@@ -160,8 +160,9 @@ package { 'Microsoft.VisualStudioCode':
 
 #### Bulk Upgrade (all packages with available updates)
 
-The `winget::upgrade` class reads the structured rows from the `winget_upgrades` fact and
-declares one `package` with `ensure => latest` per `id`, so upgrades are regular
+The `winget::upgrade` class enumerates available upgrades on demand through
+the `winget::upgrades` function and declares one `package` with
+`ensure => latest` per `id`, so upgrades are regular
 Puppet resources (reporting, noop, `--tags`) instead of a scheduled task script.
 
 ```puppet
@@ -196,7 +197,7 @@ class { 'winget::upgrade':
 
 To update specific packages (e.g. `Google.Chrome`) only when they are
 already installed, use `only`: IDs are matched against the
-`winget_upgrades` fact, which only lists installed packages with an
+on-demand enumeration, which only lists installed packages with an
 available update. An absent package declares no resource and is never
 installed (unlike `package { ensure => latest }`, which installs it):
 
@@ -218,11 +219,29 @@ include winget::upgrade
 Class['winget'] -> Class['winget::upgrade']
 ```
 
-Note: the `winget_upgrades` fact runs `winget upgrade` once per agent run
-even when the packages are skipped by the schedule; the schedule only skips
-the `package` resources outside the window. When upgrades are confined to a
-maintenance window, cache the fact with a TTL in `facter.conf` so the cost
-is paid at most once per window:
+Enumeration runs only when the class is declared: nodes without
+`winget::upgrade` never pay for a `winget upgrade` source round-trip during
+fact resolution. The `winget_upgrades` fact is opt-in inventory for PuppetDB
+(`current_version` / `available_version` rows): set
+`WINGET_UPGRADES_ENABLED=true` (also accepts `1`, `yes`, `on`) to populate
+it. The class does not need the fact — it enumerates on demand and only
+falls back to the fact rows for server-side compilation, where the function
+runs on the server without winget. The function returns `undef` when winget
+is absent or the query fails (fall back to the fact rows with a warning)
+and `[]` only when the query succeeds with no rows (authoritative, no
+fallback); a fallback or an empty result logs a warning so the no-op is
+visible in reports. If you compile server-side without the
+fact enabled, the class manages nothing, so enable the fact on those agents.
+When the opt-in fact is enabled on an agent that also declares the class,
+the agent pays for two `winget upgrade` runs per agent run (one gated fact
+for inventory, one on-demand function enumeration with a separate cache).
+To pay the inventory cost at most once per window, cache the fact with a TTL
+(see below) or leave the fact disabled: the class still enumerates on
+demand.
+
+When upgrades are confined to a maintenance window, cache the opt-in fact
+with a TTL in `facter.conf` so the inventory cost is paid at most once per
+window:
 
 ```ini
 facts : {
@@ -230,9 +249,10 @@ facts : {
 }
 ```
 
-Or opt out entirely with the `WINGET_UPGRADES_ENABLED=false` environment
-variable (`false`, `0`, `no`, `off`; or `facts : { blocklist : [ "winget_upgrades" ] }`): the fact then
-returns `[]` without shelling out.
+Or leave the fact disabled (the default): the class still enumerates on
+demand through the `winget::upgrades` function, and
+`facts : { blocklist : [ "winget_upgrades" ] }` remains available as an
+extra guard.
 
 Every winget invocation runs with a timeout (`PuppetX::Winget::Runner`):
 120 s for read-only commands (`list`, `show`, `pin list`, `upgrade`

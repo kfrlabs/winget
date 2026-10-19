@@ -21,6 +21,10 @@
 * [`winget::pin`](#winget--pin): Pin (hold) a winget package against unattended upgrades.
 * [`winget::source`](#winget--source): Manage a single winget package source.
 
+### Functions
+
+* [`winget::upgrades`](#winget--upgrades): On-demand winget upgrade inventory for `Class['winget::upgrade']`.  Runs `winget upgrade` fresh on every call (uncached, timeout-guarded by `
+
 ### Data types
 
 * [`Winget::Package`](#Winget--Package): Structured declaration of a single winget package.
@@ -611,11 +615,28 @@ Default value: `['msstore', 'winget', 'winget-font']`
 
 ### <a name="winget--upgrade"></a>`winget::upgrade`
 
-Reads structured upgrade rows from the `winget_upgrades` fact (one hash
-with `id`, `current_version` and `available_version` per package) and
-declares one `package` resource with `ensure => latest` (winget provider) per ID. Upgrades are
+Enumerates upgrade rows on demand through the `winget::upgrades` function
+(one hash with `id`, `current_version` and `available_version` per
+package) and declares one `package` resource with `ensure => latest`
+(winget provider) per ID. Upgrades are
 therefore regular Puppet resources (reporting, noop, `--tags`) instead of
 an out-of-band scheduled task script.
+
+Enumeration runs only when this class is declared: nodes without the class
+never pay for a `winget upgrade` source round-trip. The opt-in
+`winget_upgrades` fact (`WINGET_UPGRADES_ENABLED=true`) is only a fallback
+for server-side compilation, where the function runs on the server without
+winget, and standalone PuppetDB inventory. The function returns `undef`
+when winget is absent or the query fails (fall back to the fact rows with
+a warning) and `[]` only when the query succeeds with no rows (authoritative,
+no fallback). A stale fact (e.g. TTL-cached)
+is harmless: `ensure => latest` is idempotent, so IDs with no real upgrade
+stay in sync.
+
+Consent note: enumeration passes `--accept-source-agreements`, kept
+deliberately so winget can never prompt (or stall where nothing answers)
+on nodes that never opted in; the same flag is used by the provider and
+the Bolt tasks for the upgrades applied here.
 
 A package already declared elsewhere in the catalog (e.g. `package {
 'Git.Git': ensure => present }`) is left alone: redeclaring it would be a
@@ -625,14 +646,11 @@ upgrade them, either remove the other declaration or list the ID in
 sees resources parsed before this class, so declare `winget::upgrade`
 after your own `package` resources (or rely on `exclude`).
 
-The fact runs `winget upgrade` once per agent run (source round-trips, a few
-seconds) even when the packages are skipped by a `schedule` metaparameter:
-the schedule only skips the `package` resources outside the window, it does
-not skip the fact. When upgrades are confined to a maintenance window,
-cache the fact with a TTL in facter.conf so the cost is paid at most once
-per window (`facts: { ttls: [{ "winget_upgrades": "7 days" }] }`), or opt
-out entirely with `WINGET_UPGRADES_ENABLED=false` (the fact then returns
-`[]` without shelling out).
+A Puppet `schedule` metaparameter only skips the `package` resources outside
+the window, it does not skip enumeration. When upgrades are confined to a
+maintenance window, cache the opt-in fact with a TTL in facter.conf so the
+inventory cost is paid at most once per window
+(`facts: { ttls: [{ "winget_upgrades": "7 days" }] }`).
 
 Ordering with the bootstrap class is done at the call site:
 
@@ -674,7 +692,7 @@ class { 'winget::upgrade':
 #   - Google.Chrome
 # Absent IDs declare no resource and are never installed (unlike
 # `package { ensure => latest }`), because IDs are matched against the
-# `winget_upgrades` fact which only lists installed packages.
+# on-demand enumeration which only lists installed packages.
 ```
 
 ##### Reuse a schedule declared elsewhere
@@ -1262,6 +1280,62 @@ Whether to pass `--accept-source-agreements` when adding the source.
 Default: true (required for non-interactive agent runs).
 
 Default value: `true`
+
+## Functions
+
+### <a name="winget--upgrades"></a>`winget::upgrades`
+
+Type: Ruby 4.x API
+
+On-demand winget upgrade inventory for `Class['winget::upgrade']`.
+
+Runs `winget upgrade` fresh on every call (uncached, timeout-guarded by
+`PuppetX::Winget::Runner`) and returns
+the same structured rows as the opt-in `winget_upgrades` fact: one hash
+with `id`, `current_version` and `available_version` per upgradable
+package. Returns `undef` when winget is absent or the query fails (so the
+class can fall back to the fact rows); returns `[]` only when the query
+succeeds with no rows. Never raises.
+
+The class calls this function so enumeration happens only when the class
+is declared. The fact rows (`$facts['winget_upgrades']`) are only a
+fallback for server-side compilation (where this function runs on the
+server without winget) and standalone PuppetDB inventory.
+
+No per-process memoization here on purpose: on Puppet Server one server
+process compiles catalogs for many nodes, so a memoized forced output
+from node A must never satisfy node B. Each call shells out once per
+compilation (the class calls once); server-side callers that use the
+memoized `PuppetX::Winget::Facts.upgrade_output(force: true)` directly
+must call `PuppetX::Winget::Facts.reset!` once per catalog instead.
+
+#### `winget::upgrades()`
+
+On-demand winget upgrade inventory for `Class['winget::upgrade']`.
+
+Runs `winget upgrade` fresh on every call (uncached, timeout-guarded by
+`PuppetX::Winget::Runner`) and returns
+the same structured rows as the opt-in `winget_upgrades` fact: one hash
+with `id`, `current_version` and `available_version` per upgradable
+package. Returns `undef` when winget is absent or the query fails (so the
+class can fall back to the fact rows); returns `[]` only when the query
+succeeds with no rows. Never raises.
+
+The class calls this function so enumeration happens only when the class
+is declared. The fact rows (`$facts['winget_upgrades']`) are only a
+fallback for server-side compilation (where this function runs on the
+server without winget) and standalone PuppetDB inventory.
+
+No per-process memoization here on purpose: on Puppet Server one server
+process compiles catalogs for many nodes, so a memoized forced output
+from node A must never satisfy node B. Each call shells out once per
+compilation (the class calls once); server-side callers that use the
+memoized `PuppetX::Winget::Facts.upgrade_output(force: true)` directly
+must call `PuppetX::Winget::Facts.reset!` once per catalog instead.
+
+Returns: `Optional[Array[Hash]]` Upgrade rows with `id`, `current_version` and
+`available_version` keys (`[]` on success with no rows, `undef` when
+absent/error/disabled)
 
 ## Data types
 
