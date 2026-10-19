@@ -42,6 +42,24 @@ module PuppetX
           @pins_output = nil
         end
 
+        # Normalize winget command output to UTF-8 so table parsing and
+        # message interpolation never raise
+        # `Encoding::CompatibilityError` ("incompatible character encodings:
+        # IBM437 and UTF-8"). Winget writes in the OEM console codepage
+        # (IBM437/850/...) while Puppet strings are UTF-8; package names with
+        # accents, truncation ellipsis or box-drawing separators otherwise
+        # break parsing and mark every package unknown.
+        # @param text [String, nil] Raw command output
+        # @return [String] UTF-8 string with undecodable bytes replaced
+        def normalize_output(text)
+          str = text.to_s
+          return str if str.encoding == Encoding::UTF_8 && str.valid_encoding?
+
+          str.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: '?')
+        rescue StandardError
+          str.scrub('?')
+        end
+
         # @return [String, nil] Absolute path to winget.exe, or nil if absent
         def winget_path
           PuppetX::Winget::PathResolver.winget_path
@@ -59,7 +77,7 @@ module PuppetX
           output = PuppetX::Winget::Runner.run([winget, '--version'])
           return nil unless output.exitstatus.zero?
 
-          version = output.strip.sub(%r{\Av}, '')
+          version = normalize_output(output).strip.sub(%r{\Av}, '')
           version.empty? ? nil : version
         rescue StandardError
           nil
@@ -107,7 +125,7 @@ module PuppetX
           output = PuppetX::Winget::Runner.run(
             [winget, 'upgrade', '--accept-source-agreements', '--disable-interactivity'],
           )
-          output.to_s
+          normalize_output(output.to_s)
         rescue StandardError
           nil
         end
@@ -221,7 +239,7 @@ module PuppetX
           )
           return nil unless output.exitstatus.zero?
 
-          output.to_s
+          normalize_output(output.to_s)
         rescue StandardError
           nil
         end
@@ -341,11 +359,13 @@ module PuppetX
         # (`\r`). Only the text after the last carriage return of a line is
         # what ends up on screen, and it is the only text whose columns line
         # up with the table header offsets. A leading BOM is stripped so it
-        # never shifts the first column.
+        # never shifts the first column. Input is normalized to UTF-8 first
+        # (see {.normalize_output}): every parser funnels through here, so
+        # OEM-codepage output can never raise an encoding error downstream.
         # @param output [String, nil] Raw command output
         # @return [Array<String>] Non-blank lines without spinner frames
         def output_lines(output)
-          output.to_s.lines.map { |line| strip_progress(line.chomp).delete_prefix("\uFEFF") }.reject { |line| line.strip.empty? }
+          normalize_output(output).lines.map { |line| strip_progress(line.chomp).delete_prefix("\uFEFF") }.reject { |line| line.strip.empty? }
         end
 
         # Keep only the last visible segment of a line redrawn with `\r`.

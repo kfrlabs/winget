@@ -48,6 +48,17 @@ unless defined?(::PuppetX::Winget::Provider::EXIT_SUCCESS)
         # absent package (`winget upgrade` reports "No packages found").
         EXIT_NO_INSTALLED_PACKAGE_FOUND = 0x8A150014
 
+        # Text markers for "already up to date" upgrade output. Older winget
+        # builds return a generic exit code 1 with "No available upgrade
+        # found. No newer package versions are available..." instead of
+        # EXIT_UPDATE_NOT_APPLICABLE (0x8A15002B), so idempotence must also
+        # match on text (see handle_exit_code).
+        NO_UPGRADE_AVAILABLE_PATTERN = %r{No available upgrade|No newer package|No applicable update}i.freeze
+        # Text markers for "package not installed" upgrade output, used to
+        # fall back to install when older winget builds return exit code 1
+        # instead of EXIT_NO_APPLICATIONS_FOUND (0x8A150014).
+        NO_INSTALLED_PACKAGE_PATTERN = %r{No packages? found|not installed|No manifest found}i.freeze
+
         # Non-interactive flags per subcommand, verified against
         # https://learn.microsoft.com/en-us/windows/package-manager/winget/.
         # These are subcommand options: they must follow the subcommand and
@@ -127,6 +138,18 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     # package lifecycle) so the next lookup observes the new state.
     def clear_pins_cache!
       @pins_list = nil
+    end
+
+    # Normalize winget command output to UTF-8 so parsing and Puppet
+    # warning/error interpolation never raise
+    # `Encoding::CompatibilityError` ("incompatible character encodings:
+    # IBM437 and UTF-8"). Winget writes in the OEM console codepage
+    # (IBM437/850/...) while Puppet strings are UTF-8.
+    # @param text [String, nil] Raw command output
+    # @return [String] UTF-8 string with undecodable bytes replaced
+    def normalize_output(text)
+      require 'puppet_x/winget/facts'
+      PuppetX::Winget::Facts.normalize_output(text)
     end
 
     # Prefetch installed packages once for all resources in the catalog.
@@ -268,7 +291,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
     output = pin_exec('add')
     unless output.exitstatus == PuppetX::Winget::Provider::EXIT_SUCCESS
-      raise Puppet::Error, _('Failed to pin package \'%{name}\': %{output}') % { name: resource[:name], output: output }
+      raise Puppet::Error, _('Failed to pin package \'%{name}\': %{output}') % { name: resource[:name], output: self.class.normalize_output(output) }
     end
     self.class.clear_pins_cache!
     clear_installed_entry!
@@ -281,7 +304,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
     output = pin_exec('remove')
     unless output.exitstatus == PuppetX::Winget::Provider::EXIT_SUCCESS
-      raise Puppet::Error, _('Failed to unpin package \'%{name}\': %{output}') % { name: resource[:name], output: output }
+      raise Puppet::Error, _('Failed to unpin package \'%{name}\': %{output}') % { name: resource[:name], output: self.class.normalize_output(output) }
     end
     self.class.clear_pins_cache!
     clear_installed_entry!
@@ -352,18 +375,19 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     begin
       output = PuppetX::Winget::Runner.run([winget_path, 'list', *PuppetX::Winget::Provider::LIST_FLAGS])
     rescue PuppetX::Winget::Runner::TimeoutError => e
-      Puppet.warning(_('winget list timed out; installed package state is unknown this run, no changes will be attempted: %{error}') % { error: e.message })
+      Puppet.warning(_('winget list timed out; installed package state is unknown this run, no changes will be attempted: %{error}') % { error: normalize_output(e.message) })
       return nil
     end
     unless output.exitstatus == PuppetX::Winget::Provider::EXIT_SUCCESS
-      Puppet.warning(_('winget list failed with exit code %{code}; installed package state is unknown this run, no changes will be attempted: %{output}') % { code: output.exitstatus, output: output })
+      message = _('winget list failed with exit code %{code}; installed package state is unknown this run, no changes will be attempted: %{output}')
+      Puppet.warning(message % { code: output.exitstatus, output: normalize_output(output) })
       return nil
     end
 
     provider = new
     provider.parse_winget_list(output)
   rescue StandardError => e
-    Puppet.warning(_('winget list failed: %{error}; installed package state is unknown this run, no changes will be attempted') % { error: e.message })
+    Puppet.warning(_('winget list failed: %{error}; installed package state is unknown this run, no changes will be attempted') % { error: normalize_output(e.message) })
     nil
   end
 
@@ -493,7 +517,8 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     args.concat(install_option_args)
 
     output = winget_exec(*args)
-    if output.exitstatus == PuppetX::Winget::Provider::EXIT_NO_APPLICATIONS_FOUND
+    if output.exitstatus == PuppetX::Winget::Provider::EXIT_NO_APPLICATIONS_FOUND ||
+       (output.exitstatus == 1 && normalize_output(output) =~ PuppetX::Winget::Provider::NO_INSTALLED_PACKAGE_PATTERN)
       Puppet.debug("winget upgrade found no installed package #{resource[:name]}, falling back to install")
       install
     else
@@ -534,6 +559,14 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   end
 
   private
+
+  # Instance-level alias so private helpers stay encoding-safe without
+  # reaching for the class explicitly.
+  # @param text [String, nil] Raw command output
+  # @return [String] UTF-8 string with undecodable bytes replaced
+  def normalize_output(text)
+    self.class.normalize_output(text)
+  end
 
   # Pinned version requested through `ensure => 'x.y.z'`.
   # @return [String, nil] The version, or nil for installed/present/latest
@@ -695,9 +728,19 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   end
 
   # Map winget exit codes to idempotent behavior with meaningful errors
+  # All interpolated command output goes through `normalize_output` so a
+  # non-UTF-8 OEM codepage never raises Encoding::CompatibilityError while
+  # building the error message.
   # @param output [Puppet::Util::Execution::ProcessOutput]
   # @param action [String] Action name for error messages
   def handle_exit_code(output, action)
+    text = normalize_output(output)
+    if action == 'upgrade' && text =~ PuppetX::Winget::Provider::NO_UPGRADE_AVAILABLE_PATTERN
+      # Older winget builds exit 1 with "No available upgrade found. No
+      # newer package versions are available..." while newer builds exit
+      # 0x8A15002B: both mean "already up to date", i.e. idempotent success.
+      return nil
+    end
     case output.exitstatus
     when PuppetX::Winget::Provider::EXIT_SUCCESS
       # Success
@@ -706,13 +749,13 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
          PuppetX::Winget::Provider::EXIT_INSTALL_ALREADY_INSTALLED
       # Already installed (during install) - idempotent success
       return nil if action == 'install'
-      raise Puppet::Error, _('winget %{action} failed: %{output}') % { action: action, output: output }
+      raise Puppet::Error, _('winget %{action} failed: %{output}') % { action: action, output: text }
     when PuppetX::Winget::Provider::EXIT_UPDATE_NOT_APPLICABLE
       # winget listed an upgrade but its own version comparison finds
       # nothing newer (e.g. 7zip '26.04' available vs '26.04.00.0'
       # installed): idempotent success for upgrade
       return nil if action == 'upgrade'
-      raise Puppet::Error, _('winget %{action} failed: %{output}') % { action: action, output: output }
+      raise Puppet::Error, _('winget %{action} failed: %{output}') % { action: action, output: text }
     when PuppetX::Winget::Provider::EXIT_INSTALL_REBOOT_REQUIRED_TO_FINISH,
          PuppetX::Winget::Provider::EXIT_INSTALL_REBOOT_REQUIRED_FOR_INSTALL,
          PuppetX::Winget::Provider::EXIT_INSTALL_REBOOT_INITIATED
@@ -729,10 +772,10 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     when PuppetX::Winget::Provider::EXIT_NO_MANIFEST_FOUND
       raise Puppet::Error, _('Package \'%{name}\' not found in winget source') % { name: resource[:name] }
     when PuppetX::Winget::Provider::EXIT_NO_APPLICABLE_INSTALLER
-      raise Puppet::Error, _('winget %{action} failed: no applicable installer for the current system: %{output}') % { action: action, output: output }
+      raise Puppet::Error, _('winget %{action} failed: no applicable installer for the current system: %{output}') % { action: action, output: text }
     when PuppetX::Winget::Provider::EXIT_BLOCKED_BY_POLICY,
          PuppetX::Winget::Provider::EXIT_INSTALL_BLOCKED_BY_POLICY
-      raise Puppet::Error, _('winget %{action} blocked by policy: %{output}') % { action: action, output: output }
+      raise Puppet::Error, _('winget %{action} blocked by policy: %{output}') % { action: action, output: text }
     when PuppetX::Winget::Provider::EXIT_INSTALLER_HASH_MISMATCH
       raise Puppet::Error, _('winget %{action} failed: installer hash mismatch') % { action: action }
     when PuppetX::Winget::Provider::EXIT_DOWNLOAD_FAILED
@@ -740,7 +783,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     when PuppetX::Winget::Provider::EXIT_INSTALL_CANCELLED_BY_USER
       raise Puppet::Error, _('winget %{action} cancelled by user') % { action: action }
     else
-      raise Puppet::Error, _('winget %{action} failed with exit code %{code}: %{output}') % { action: action, code: output.exitstatus, output: output }
+      raise Puppet::Error, _('winget %{action} failed with exit code %{code}: %{output}') % { action: action, code: output.exitstatus, output: text }
     end
   end
 end
