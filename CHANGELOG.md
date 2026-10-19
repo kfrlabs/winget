@@ -80,7 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Remove-AppxPackage -AllUsers` alone fails with `0x80070032` on staged
   images (seen on the CI runner), and provisioned installs from our own
   bootstrap fallback were never removed. Each step is best effort; the exec
-  fails closed only when an instance still resolves
+  fails closed only when an instance still resolves. Note: on images where
+  App Installer is an inbox system component (`SignatureKind` `System`,
+  e.g. stock Windows Server 2025 images) Windows blocks the removal
+  (`0x80070032`) and the run fails closed instead of silently keeping it
 - `winget_upgrades` fact is now opt-in inventory (issue #33): it returns
   `[]` without shelling out unless `WINGET_UPGRADES_ENABLED` is set to a
   true-like value (`true`, `1`, `yes`, `on`). Nodes without
