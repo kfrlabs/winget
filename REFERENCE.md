@@ -23,7 +23,7 @@
 
 ### Functions
 
-* [`winget::upgrades`](#winget--upgrades): On-demand winget upgrade inventory for `Class['winget::upgrade']`.  Runs `winget upgrade` once per compilation (memoized separately from the 
+* [`winget::upgrades`](#winget--upgrades): On-demand winget upgrade inventory for `Class['winget::upgrade']`.  Runs `winget upgrade` fresh on every call (uncached, timeout-guarded by `
 
 ### Data types
 
@@ -1289,8 +1289,8 @@ Type: Ruby 4.x API
 
 On-demand winget upgrade inventory for `Class['winget::upgrade']`.
 
-Runs `winget upgrade` once per compilation (memoized separately from the
-gated fact cache, timeout-guarded by `PuppetX::Winget::Runner`) and returns
+Runs `winget upgrade` fresh on every call (uncached, timeout-guarded by
+`PuppetX::Winget::Runner`) and returns
 the same structured rows as the opt-in `winget_upgrades` fact: one hash
 with `id`, `current_version` and `available_version` per upgradable
 package. Returns `undef` when winget is absent or the query fails (so the
@@ -1301,13 +1301,20 @@ The class calls this function so enumeration happens only when the class
 is declared. The fact rows (`$facts['winget_upgrades']`) are only a
 fallback for server-side compilation (where this function runs on the
 server without winget) and standalone PuppetDB inventory.
+
+No per-process memoization here on purpose: on Puppet Server one server
+process compiles catalogs for many nodes, so a memoized forced output
+from node A must never satisfy node B. Each call shells out once per
+compilation (the class calls once); server-side callers that use the
+memoized `PuppetX::Winget::Facts.upgrade_output(force: true)` directly
+must call `PuppetX::Winget::Facts.reset!` once per catalog instead.
 
 #### `winget::upgrades()`
 
 On-demand winget upgrade inventory for `Class['winget::upgrade']`.
 
-Runs `winget upgrade` once per compilation (memoized separately from the
-gated fact cache, timeout-guarded by `PuppetX::Winget::Runner`) and returns
+Runs `winget upgrade` fresh on every call (uncached, timeout-guarded by
+`PuppetX::Winget::Runner`) and returns
 the same structured rows as the opt-in `winget_upgrades` fact: one hash
 with `id`, `current_version` and `available_version` per upgradable
 package. Returns `undef` when winget is absent or the query fails (so the
@@ -1318,6 +1325,13 @@ The class calls this function so enumeration happens only when the class
 is declared. The fact rows (`$facts['winget_upgrades']`) are only a
 fallback for server-side compilation (where this function runs on the
 server without winget) and standalone PuppetDB inventory.
+
+No per-process memoization here on purpose: on Puppet Server one server
+process compiles catalogs for many nodes, so a memoized forced output
+from node A must never satisfy node B. Each call shells out once per
+compilation (the class calls once); server-side callers that use the
+memoized `PuppetX::Winget::Facts.upgrade_output(force: true)` directly
+must call `PuppetX::Winget::Facts.reset!` once per catalog instead.
 
 Returns: `Optional[Array[Hash]]` Upgrade rows with `id`, `current_version` and
 `available_version` keys (`[]` on success with no rows, `undef` when
