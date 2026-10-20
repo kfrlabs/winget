@@ -15,9 +15,16 @@
 # Do not combine a blocking pin with `ensure => latest` on the same package:
 # the explicit upgrade would fail until the pin is removed.
 #
-# The pin presence guard is ID-based: changing `version` or `blocking` on an
-# existing pin requires removing it first (`ensure => absent`, then
-# `present` again).
+# The pin presence guard is ID-based, but the declared attributes also
+# converge: when `blocking` or `version` of an existing pin drift from the
+# declaration, the stale pin is removed and re-added in the same run (the
+# removal is ordered before the add, and the add guard is re-evaluated after
+# the removal). `source` cannot be compared (`pin list` shows no source
+# column), so changing only `source` on an existing pin has no effect:
+# remove it (`ensure => absent`) and re-add it instead. On winget builds
+# whose `pin list` renders no pin-type column, the `blocking` comparison
+# degrades to presence-only and a changed `blocking` flag behaves like
+# before (documented limitation, warned about in the reference).
 #
 # Nothing is declared while winget itself is absent (fresh bootstrap): order
 # pins after the bootstrap class so they converge on the next run:
@@ -28,13 +35,18 @@
 #   Whether the pin exists (`present`) or not (`absent`).
 # @param version
 #   Optional gating version (`'1.2.3'` or range `'1.2.*'`). Undef (default)
-#   means a plain pin without version gating.
+#   means a plain pin without version gating. Changing it on an existing pin
+#   removes and re-adds the pin so the catalog converges in one run.
 # @param blocking
 #   Whether the pin blocks even explicit upgrades. Default: false (plain
-#   pinning: only `upgrade --all` skips the package).
+#   pinning: only `upgrade --all` skips the package). Changing it on an
+#   existing pin removes and re-adds the pin so the catalog converges in
+#   one run.
 # @param source
 #   Optional source scoping the pin (`--source`). Undef (default) means all
-#   sources.
+#   sources. `pin list` exposes no source column, so changing only `source`
+#   on an existing pin has no effect: remove the pin first
+#   (`ensure => absent`), then re-add it.
 #
 # @example Hold back Chrome with a blocking pin
 #   winget::pin { 'Google.Chrome':
@@ -86,6 +98,31 @@ define winget::pin (
     $pinned_check = "${powershell} -NoProfile -Command \"if (& '${winget}' pin list --id '${safe_title}' --exact --disable-interactivity | Select-String -Quiet -SimpleMatch '${safe_title}') { exit 0 } else { exit 1 }\""
 
     if $ensure == 'present' {
+      # Stale-attribute guard (issue #38): `pin list --id` renders one row
+      # per pin (`Name Id Version Pin`, Pin is `Pinning` or `Blocking`, the
+      # Version cell carries the gating pattern). When the row exists but
+      # the requested `blocking` flag or `version` differs, the pin is
+      # removed here and the add below re-creates it: Puppet evaluates the
+      # add guard after this removal (explicit `before`), so a drifted pin
+      # converges in a single run and the next run is a no-op. `source` has
+      # no column and is not compared (see the parameter docs).
+      $blocking_check = $blocking ? {
+        true    => "if (-not (\$raw | Select-String -Quiet -Pattern '\\sBlocking(\\s|\$)')) { \$stale = \$true };",
+        default => "if (\$raw | Select-String -Quiet -Pattern '\\sBlocking(\\s|\$)') { \$stale = \$true };",
+      }
+      $version_stale_check = $safe_version ? {
+        undef   => '',
+        default => "if (-not (\$raw | Select-String -Quiet -SimpleMatch '${safe_version}')) { \$stale = \$true };",
+      }
+      $stale_check = "${powershell} -NoProfile -Command \"\$raw = & '${winget}' pin list --id '${safe_title}' --exact --disable-interactivity; if (-not (\$raw | Select-String -Quiet -SimpleMatch '${safe_title}')) { exit 1 }; \$stale = \$false; ${blocking_check} ${version_stale_check} if (\$stale) { exit 0 } else { exit 1 }\""
+
+      exec { "winget-pin-remove-stale-${title}":
+        command => "${powershell} -NoProfile -Command \"& '${winget}' pin remove --id '${safe_title}' --exact --disable-interactivity\"",
+        onlyif  => $stale_check,
+        before  => Exec["winget-pin-add-${title}"],
+        timeout => 300,
+      }
+
       exec { "winget-pin-add-${title}":
         command => "${powershell} -NoProfile -Command \"& '${winget}' pin add --id '${safe_title}' --exact${version_flag}${blocking_flag}${source_flag} --accept-source-agreements --disable-interactivity\"",
         unless  => $pinned_check,

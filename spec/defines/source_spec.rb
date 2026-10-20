@@ -58,6 +58,31 @@ describe 'winget::source' do
         .with_command(%r{--trust-level 'trusted'})
         .with_command(%r{--explicit})
     end
+
+    it 'removes a stale source before re-adding when attributes drift (issue #38)' do
+      is_expected.to contain_exec('winget-source-remove-stale-contoso')
+        .with_onlyif(%r{source export})
+        .with_onlyif(%r{Arg -ne 'https://winget\.contoso\.example\.com/cache'})
+        .with_onlyif(%r{Type -ne 'Microsoft\.Rest'})
+        .with_onlyif(%r{TrustLevel.*Trusted})
+        .with_onlyif(%r{Explicit})
+        .with_before('Exec[winget-source-add-contoso]')
+    end
+  end
+
+  context 'with default attributes (issue #38)' do
+    it 'still declares the stale removal comparing the url' do
+      stale = catalogue.resource('Exec', 'winget-source-remove-stale-contoso')
+      expect(stale[:onlyif]).to match(%r{Arg -ne 'https://winget\.contoso\.example\.com/cache'})
+      # Unset attributes are not compared (presence-only for those).
+      expect(stale[:onlyif]).not_to match(%r{Type -ne})
+      expect(stale[:onlyif]).not_to match(%r{TrustLevel})
+    end
+
+    it 'converges an explicit source back to non-explicit' do
+      stale = catalogue.resource('Exec', 'winget-source-remove-stale-contoso')
+      expect(stale[:onlyif]).to match(%r{Explicit})
+    end
   end
 
   context 'with a Sensitive header' do
@@ -126,6 +151,10 @@ describe 'winget::source' do
         .with_command(%r{source remove --name 'contoso'})
         .with_onlyif(%r{source list})
       is_expected.not_to contain_exec('winget-source-add-contoso')
+    end
+
+    it 'declares no stale-attribute removal for ensure => absent (issue #38)' do
+      is_expected.not_to contain_exec('winget-source-remove-stale-contoso')
     end
 
     it 'uses explicit exit codes in the source list guard' do

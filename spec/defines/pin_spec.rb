@@ -48,6 +48,11 @@ describe 'winget::pin' do
       is_expected.to contain_exec('winget-pin-add-Google.Chrome')
         .with_command(%r{--version '120\.\*'})
     end
+
+    it 'removes a pin with a different version before re-adding (issue #38)' do
+      stale = catalogue.resource('Exec', 'winget-pin-remove-stale-Google.Chrome')
+      expect(stale[:onlyif]).to match(%r{SimpleMatch '120\.\*'})
+    end
   end
 
   context 'with a blocking pin' do
@@ -58,6 +63,25 @@ describe 'winget::pin' do
     it 'passes --blocking to pin add' do
       is_expected.to contain_exec('winget-pin-add-Google.Chrome')
         .with_command(%r{--blocking})
+    end
+
+    it 'removes a stale non-blocking pin before re-adding (issue #38)' do
+      is_expected.to contain_exec('winget-pin-remove-stale-Google.Chrome')
+        .with_onlyif(%r{-not .*Blocking})
+        .with_before('Exec[winget-pin-add-Google.Chrome]')
+    end
+  end
+
+  context 'with a plain pin (issue #38)' do
+    it 'removes a stale blocking pin before re-adding' do
+      stale = catalogue.resource('Exec', 'winget-pin-remove-stale-Google.Chrome')
+      expect(stale[:onlyif]).to match(%r{Blocking})
+      expect(stale[:before].to_s).to eq('Exec[winget-pin-add-Google.Chrome]')
+    end
+
+    it 'orders the stale removal before the add' do
+      is_expected.to contain_exec('winget-pin-remove-stale-Google.Chrome')
+        .with_before('Exec[winget-pin-add-Google.Chrome]')
     end
   end
 
@@ -71,6 +95,10 @@ describe 'winget::pin' do
         .with_command(%r{pin remove --id 'Google\.Chrome' --exact})
         .with_onlyif(%r{pin list --id 'Google\.Chrome' --exact})
       is_expected.not_to contain_exec('winget-pin-add-Google.Chrome')
+    end
+
+    it 'declares no stale-attribute removal for ensure => absent (issue #38)' do
+      is_expected.not_to contain_exec('winget-pin-remove-stale-Google.Chrome')
     end
 
     it 'uses explicit exit codes in the pin list guard' do

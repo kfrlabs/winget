@@ -145,6 +145,13 @@ describe 'winget::install::local' do
         .with_onlyif(%r{Get-AppxPackage -AllUsers Microsoft\.DesktopAppInstaller})
     end
 
+    it 'also removes the staged provisioned package (Remove-AppxPackage alone fails with 0x80070032 on staged images)' do
+      exec = catalogue.resource('Exec[winget_uninstall_local_winget_local]')
+      expect(exec[:command]).to match(%r{Remove-AppxProvisionedPackage -Online})
+      expect(exec[:command]).to match(%r{still installed})
+      expect(exec[:onlyif]).to match(%r{Get-AppxProvisionedPackage -Online})
+    end
+
     it 'declares no install exec and no dependency exec' do
       is_expected.not_to contain_exec('winget_install_local_winget_local')
       is_expected.to have_exec_resource_count(1)

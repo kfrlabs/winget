@@ -17,10 +17,13 @@
 #
 # @param ensure
 #   Desired state: 'present', 'absent', or a specific version string.
+#   Anything else (typos included) fails compilation.
 #
 # @param version
-#   Specific version to install (e.g., '1.8.2391'). Recorded for interface
-#   consistency; the installed version is determined by the file content.
+#   DEPRECATED: use `ensure` instead. Specific version to install (e.g.,
+#   '1.8.2391'). Kept for backward compatibility (still honored); setting it
+#   logs a deprecation warning. Recorded for interface consistency; the
+#   installed version is determined by the file content.
 #
 # @param dependencies
 #   Array of dependency AppX/MSIX files to install first. Optional.
@@ -31,10 +34,13 @@
 #   so a mismatching file would reinstall on every run.
 define winget::install::local (
   String $source_path,
-  String $ensure              = 'present',
+  Winget::Ensure $ensure      = 'present',
   Optional[String] $version   = undef,
   Array[String] $dependencies = []
 ) {
+  if $version {
+    warning("winget::install::local[${title}]: the version parameter is deprecated, use ensure => '<version>' instead (still honored for backward compatibility).")
+  }
   if $version and $version =~ /^\d+(\.\d+)+$/ {
     $real_ensure = $version
   } else {
@@ -53,9 +59,14 @@ define winget::install::local (
   }
 
   if $real_ensure == 'absent' {
+    # Removal covers both registration flavors: per-user/all-users instances
+    # (`Remove-AppxPackage`, which fails with 0x80070032 on staged images)
+    # and the staged provisioned package (`Remove-AppxProvisionedPackage`,
+    # which offline installs may create). Each step is best effort; the exec
+    # fails closed only when an instance still resolves afterwards.
     exec { "winget_uninstall_local_${title}":
-      command => "${powershell} -NoProfile -Command \"Remove-AppxPackage -AllUsers -Package (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller).PackageFullName\"",
-      onlyif  => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
+      command => "${powershell} -NoProfile -Command \"\$pkgs = Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller; if (\$pkgs) { try { \$pkgs | Remove-AppxPackage -AllUsers -ErrorAction Stop } catch { Write-Warning ('Remove-AppxPackage failed, trying provisioned removal: ' + \$_.Exception.Message) } }; \$prov = Get-AppxProvisionedPackage -Online | Where-Object { \$_.PackageName -like 'Microsoft.DesktopAppInstaller*' }; if (\$prov) { try { \$prov | ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName \$_.PackageName -ErrorAction Stop } } catch { Write-Warning ('Remove-AppxProvisionedPackage failed: ' + \$_.Exception.Message) } }; if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { throw 'Microsoft.DesktopAppInstaller is still installed' }\"",
+      onlyif  => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } elseif (Get-AppxProvisionedPackage -Online | Where-Object { \$_.PackageName -like 'Microsoft.DesktopAppInstaller*' }) { exit 0 } else { exit 1 }\"",
       timeout => 300,
     }
   } else {

@@ -6,7 +6,9 @@
 #
 # === Prerequisites
 #
-# * Windows 10 version 1809 (build 17763) or later, Windows Server 2019 or later
+# * Windows 10 version 1809 (build 17763) or later, Windows Server 2022 or later
+#   (Windows Server 2019 is best effort / untested: Microsoft only documents
+#   winget for Windows 10, Windows 11 and Windows Server 2025)
 # * Internet access to download the App Installer package (or a local source via `source_path`)
 # * SYSTEM account must have read access to `%ProgramFiles%\WindowsApps`
 # * Proxy support via `proxy` parameter if the system requires a proxy for internet access
@@ -31,12 +33,18 @@
 # === Parameters
 #
 # @param ensure
-#   Desired state of winget. Valid values: 'present', 'absent', or a specific version string
-#   (e.g., '1.8.2391'). Default: 'present' (installs latest available).
+#   Desired state of winget: 'present', 'absent', or a specific version
+#   string (e.g., '1.8.2391'). Anything else (including typos such as
+#   'presnt', 'installed' or 'latest', which have no distinct meaning for the
+#   presence-based bootstrap) fails compilation. Note: removal can be
+#   blocked by Windows itself (`0x80070032`, e.g. a provisioned bundle whose
+#   registered instance refuses DeStage on stock images): the run then fails
+#   closed instead of silently keeping winget.
 #
 # @param version
 #   DEPRECATED: Use `ensure` instead. Specific version to install (e.g., '1.8.2391').
-#   This parameter is kept for backward compatibility.
+#   This parameter is kept for backward compatibility and logs a deprecation
+#   warning when set.
 #
 # @param source
 #   Installation source for winget. Valid values: 'cdn' (Microsoft CDN
@@ -119,8 +127,8 @@
 #   Class['winget'] -> Package <| provider == winget |>
 #
 class winget (
-  String $ensure                    = 'present',
-  Optional[String] $version         = undef,
+  Winget::Ensure $ensure                    = 'present',
+  Optional[String] $version                 = undef,
   Enum['msstore', 'cdn', 'github', 'auto'] $source = 'auto',
   Optional[String] $source_path     = undef,
   Array[String] $dependencies       = [],
@@ -144,13 +152,22 @@ class winget (
 
   # Warn on OS releases outside the supported list (see metadata.json).
   # String comparison only: os.release values are strings in facts.
+  # Windows Server 2019 is deliberately excluded (issue #46): it is not
+  # covered by CI and Microsoft only documents winget for Windows 10,
+  # Windows 11 and Windows Server 2025, so 2019 nodes get this warning
+  # (best effort, sideload App Installer via source_path + dependencies).
   $os_major = $facts['os']['release']['major']
-  $supported_releases = ['10', '11', '2019', '2022', '2025']
+  $supported_releases = ['10', '11', '2022', '2025']
   if !($os_major in $supported_releases) {
-    warning('winget requires Windows 10, Windows 11, Windows Server 2019, Windows Server 2022 or Windows Server 2025. Current OS may not be supported.')
+    warning('winget requires Windows 10, Windows 11, Windows Server 2022 or Windows Server 2025. Windows Server 2019 and earlier are untested/best effort and may not be supported.')
   }
 
-  # Backward compatibility: if version is specified, use it for ensure
+  # Backward compatibility: if version is specified, use it for ensure.
+  # The parameter itself is deprecated (warned about, issue #45); a
+  # non-version value is ignored as before.
+  if $version {
+    warning("winget: the version parameter is deprecated, use ensure => '<version>' instead (e.g. ensure => '1.8.2391').")
+  }
   if $version and $version =~ /^\d+(\.\d+)+$/ {
     $real_ensure = $version
   } else {
@@ -166,7 +183,7 @@ class winget (
       # `Class['winget'] -> Package <| provider == winget |>` collector
       # would make it depend on its own container (dependency cycle).
       # The install defines already implement the tested removal.
-      winget::install::msstore { 'winget':
+      winget::install::cdn { 'winget':
         ensure => 'absent',
       }
       if !$packages.empty {
@@ -195,7 +212,7 @@ class winget (
         # Install winget using the selected source
         case $source {
           'msstore', 'cdn': {
-            winget::install::msstore { 'winget':
+            winget::install::cdn { 'winget':
               ensure                   => $real_ensure,
               accept_source_agreements => $accept_source_agreements,
               proxy                    => $proxy,
@@ -226,7 +243,7 @@ class winget (
               # `fail_on_error => false`: a failed cdn attempt must not mark
               # Class['winget'] as failed, otherwise every resource ordered
               # after it is skipped even when the github fallback succeeds.
-              winget::install::msstore { 'winget':
+              winget::install::cdn { 'winget':
                 ensure                   => $real_ensure,
                 accept_source_agreements => $accept_source_agreements,
                 proxy                    => $proxy,

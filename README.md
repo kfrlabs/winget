@@ -27,7 +27,7 @@ This module provides a `winget` provider for Puppet's built-in `package` type, a
 ## Requirements
 
 - **Puppet**: >= 7.0.0 < 9.0.0 (Puppet 7/8, OpenVox 8 compatible)
-- **Operating System**: Windows 10 1809 (build 17763) or later, Windows Server 2019, 2022 or 2025
+- **Operating System**: Windows 10 1809 (build 17763) or later, Windows Server 2022 or 2025 (Windows Server 2019: best effort, untested — see [Windows Server Support](#windows-server-support))
 - **Architecture**: x64 and arm64 supported
 - **Internet Access**: Required for downloading winget from the Microsoft CDN (`aka.ms/getwinget`) or GitHub (unless using `source_path` for offline installation)
 - **Proxy Support**: Configurable via `proxy` parameter
@@ -532,6 +532,13 @@ winget::configure { 'C:/Configs/workstation.winget': }
 Class['winget'] -> Winget::Configure <| |>
 ```
 
+> Trust model: a configuration file runs as SYSTEM with configuration
+> agreements accepted by default. Whoever controls the file controls the
+> node: keep configuration files on internal, pinned locations you control
+> (local path, UNC share or `https://` URL — anything else fails
+> compilation). Idempotence needs winget >= 1.6 (`configure test`); older
+> builds re-apply on every run (with a warning) until winget is upgraded.
+
 #### Microsoft Store Source
 
 > Note: `--source msstore` here is the winget CLI package source (passed
@@ -811,11 +818,12 @@ the provider `holdable` feature.
 Applies a winget configuration file idempotently (`winget configure`,
 guarded by `winget configure test`).
 
-#### `winget::install::msstore`
+#### `winget::install::cdn`
 
 Installs winget from the Microsoft CDN (`https://aka.ms/getwinget`).
-Backs both `source => 'cdn'` (preferred) and the deprecated
-`source => 'msstore'` alias: never the Store app.
+Backs `source => 'cdn'` (preferred); the deprecated `source => 'msstore'`
+alias and the `winget::install::msstore` define (deprecated wrapper) resolve
+here: never the Store app.
 
 #### `winget::install::github`
 
@@ -915,8 +923,15 @@ Set-Acl "C:\Program Files\WindowsApps" $acl
 
 ### Windows Server Support
 
-- Windows Server 2019, 2022 and 2025 are supported
-- Windows Server 2016 and earlier are **not supported** (winget requires Windows 10 1809+ / Server 2019+)
+- Windows Server 2022 and 2025, plus Windows 10 1809+ / 11, are supported
+  (CI runs on `windows-latest`; live observations in this README are from
+  Windows Server 2025)
+- Windows Server 2019 is **best effort / untested**: it is not covered by CI,
+  and Microsoft only documents winget for Windows 10, Windows 11 and
+  Windows Server 2025. On 2019 you must sideload App Installer and its
+  framework dependencies (use `source_path` + `dependencies` for offline
+  installation); expect a support warning in the Puppet report
+- Windows Server 2016 and earlier are **not supported** (winget requires Windows 10 1809+ APIs)
 - Some packages may not be available on Server editions
 
 ### Source Agreements
@@ -1113,19 +1128,57 @@ pdk bundle exec puppet strings generate --format markdown
 
 ## Acceptance Testing
 
-### CI (Windows runner, real `puppet apply`, no Litmus)
+### CI (Windows runner, real `puppet apply` as SYSTEM, no Litmus)
 
-The `acceptance` CI job runs on `windows-latest` with a real Puppet agent.
-It is part of the gate and never degrades to a syntax-only check:
+The `acceptance` CI job runs on `windows-latest` with a real agent. It is
+part of the gate and never degrades to a syntax-only check. It runs twice:
+once with the Puppet agent (Chocolatey `puppet-agent`) and once with the
+OpenVox 8 agent (MSI from `downloads.voxpupuli.org`).
 
-1. Installs `puppet-agent` via Chocolatey.
-2. Stages the repo as the `winget` module in the agent modulepath.
-3. Applies `class { 'winget': ensure => present }` with
+Every `puppet apply` runs as SYSTEM through a one-shot scheduled task,
+because the agent service runs as SYSTEM and the documented pitfalls
+(per-user aliases, `WindowsApps` ACLs, machine vs user install scope) only
+show there:
+
+1. Resolves the agent binary and modulepath (works for both agents),
+   stages the repo as the `winget` module, and proves the SYSTEM context
+   (`whoami`) before doing anything else.
+2. Applies `class { 'winget': ensure => present }` with
    `--detailed-exitcodes` (first run: 0 or 2), then applies the same manifest
    again and requires exit code 0 (idempotency).
-4. Checks `winget --version`, then evaluates a noop catalog with a
-   `package { 'Git.Git': provider => winget }` ordered after
-   `Class['winget']` to prove the provider loads without installing anything.
+3. Proves the fully qualified `winget.exe` executes as SYSTEM
+   (`--version`); some images cannot (STATUS_DLL_NOT_FOUND) and the job
+   fails fast with a clear message instead of cascading.
+4. Installs `7zip.7zip` machine-scope as SYSTEM (changes, then idempotent —
+   a user-scope install would be invisible to `winget list` as SYSTEM and the
+   second apply would not be a no-op).
+5. `winget::pin` add, no-op apply, drift to `blocking => true` (must converge
+   in one run, second apply a no-op, `pin list` shows `Blocking`), then
+   remove.
+6. `winget::source` on the built-in `winget-font` source: remove, add from
+   absent, no-op apply, drift of `explicit` (must converge in one run,
+   second apply a no-op) and restoration of the original explicit state
+   (a throwaway probe name is unusable: `source add` refuses a URL already
+   registered under another name, and the only reachable valid endpoints
+   are the default sources).
+7. Asserts the `winget_path` / `winget_version` / `winget_pins` facts have the
+   expected shapes as SYSTEM.
+8. Runs the `winget::list_upgrades` task script as SYSTEM and requires exit 0
+   plus JSON output with an `upgrades` key.
+9. `ensure => latest` on the package (changes, then idempotent), then
+   `ensure => absent` for the package (converges, then holds; `winget list`
+   must no longer show the ID), and finally `class { 'winget': ensure =>
+   absent }` (contract: converge where the image allows removal, otherwise
+   fail closed with the platform error — a provisioned bundle whose
+   registered instance refuses DeStage, `0x80070032`, is accepted as the
+   documented fail-closed outcome, never as a silent skip; runs last
+   because nothing after it needs winget).
+10. Every state-changing step is followed by an end-state assertion, so a
+    guard regression (e.g. the `Select-String` exit-code bug, where the guard
+    always succeeds and the exec never runs) fails the job instead of
+    silently skipping.
+
+A nightly `schedule` run repeats the same matrix to absorb network flakiness.
 
 ### Optional Litmus runs (local only)
 

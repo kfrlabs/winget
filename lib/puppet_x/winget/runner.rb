@@ -62,6 +62,17 @@ module PuppetX
 
           if wait_thr.join(timeout).nil?
             kill_tree(pid)
+            # Reap the killed child: without this join the pid lingers as a
+            # zombie (reaped only when `wait_thr` happens to be scheduled),
+            # leaking one zombie per timed-out command in the long-lived
+            # agent and making "no orphan" assertions racy. Bounded so a
+            # wedged reaper cannot hang the agent (KILL is reliable; this
+            # returns immediately in practice).
+            begin
+              wait_thr.join(5)
+            rescue StandardError
+              nil
+            end
             begin
               stdout_err.close
             rescue StandardError

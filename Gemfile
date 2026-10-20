@@ -48,12 +48,24 @@ group :system_tests do
 end
 
 puppet_version = ENV['PUPPET_GEM_VERSION']
+puppet_version = nil if puppet_version.nil? || puppet_version.empty?
+openvox_version = ENV['OPENVOX_GEM_VERSION']
+openvox_version = nil if openvox_version.nil? || openvox_version.empty?
 facter_version = ENV['FACTER_GEM_VERSION']
+facter_version = nil if facter_version.nil? || facter_version.empty?
 hiera_version = ENV['HIERA_GEM_VERSION']
+hiera_version = nil if hiera_version.nil? || hiera_version.empty?
 
 gems = {}
 
-gems['puppet'] = location_for(puppet_version)
+# OpenVox 8 (issue #44) keeps the `Puppet` Ruby namespace, so the module code
+# runs unmodified; only the gem changes. When OPENVOX_GEM_VERSION is set the
+# `openvox` gem replaces `puppet` (they must never be installed together).
+if openvox_version
+  gems['openvox'] = location_for(openvox_version)
+else
+  gems['puppet'] = location_for(puppet_version)
+end
 
 # If facter or hiera versions have been specified via the environment
 # variables

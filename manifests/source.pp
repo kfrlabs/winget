@@ -17,6 +17,16 @@
 #
 #   Class['winget'] -> Winget::Source <| |>
 #
+# Changing `url`, `source_type`, `trust_level` or `explicit` on an existing
+# source removes and re-adds it in the same run (the removal is ordered
+# before the add, and the add guard is re-evaluated after the removal), so
+# a drifted source converges in one run and the next run is a no-op. The
+# comparison reads the current definition from `winget source export`
+# (JSON, locale-independent). Attributes that cannot be read back are not
+# compared: `header` is write-only (see its docs), and on winget builds
+# whose export lacks a field (e.g. `Explicit`), that field degrades to
+# presence-only.
+#
 # @param ensure
 #   Whether the source exists (`present`) or not (`absent`).
 # @param url
@@ -27,14 +37,19 @@
 #   (default) or `Microsoft.Rest`. Undef (default) lets winget decide.
 # @param trust_level
 #   Source trust level (`--trust-level`): `none` or `trusted`. Undef
-#   (default) leaves the winget default.
+#   (default) leaves the winget default. Changing it on an existing source
+#   removes and re-adds the source so the catalog converges in one run
+#   (`trusted` means the exported `TrustLevel` contains `Trusted`).
 # @param explicit
 #   Whether the source is explicit (`--explicit`): explicit sources must be
-#   targeted with `--source` on every command. Default: false. Changing this
-#   on an existing source is not enforced (remove and re-add instead).
+#   targeted with `--source` on every command. Default: false. Changing it
+#   on an existing source removes and re-adds the source so the catalog
+#   converges in one run.
 # @param header
 #   Optional REST source HTTP header (`--header`). `Sensitive` so the value
-#   never lands in logs or reports.
+#   never lands in logs or reports. The header is write-only: it cannot be
+#   read back, so changing only the header is not detected — remove the
+#   source (`ensure => absent`) and re-add it to rotate the header.
 # @param accept_source_agreements
 #   Whether to pass `--accept-source-agreements` when adding the source.
 #   Default: true (required for non-interactive agent runs).
@@ -90,6 +105,44 @@ define winget::source (
         true    => ' --explicit',
         default => '',
       }
+
+      # Stale-attribute guard (issue #38): `winget source export` emits one
+      # JSON object per line (`Name`, `Arg`, `Type`, `TrustLevel` array,
+      # `Explicit` boolean — verified against winget 1.29). When the source
+      # exists but a readable attribute differs, it is removed here and the
+      # add below re-creates it: Puppet evaluates the add guard after this
+      # removal (explicit `before`), so a drifted source converges in a
+      # single run and the next run is a no-op. Unreadable attributes keep
+      # presence-only behaviour: `header` is never compared (write-only
+      # `Sensitive`), and a field missing from the export (older winget) is
+      # skipped instead of forcing a removal loop.
+      $trust_stale_check = $safe_trust_level ? {
+        undef   => '',
+        default => $trust_level ? {
+          'trusted' => "if ((\$row.PSObject.Properties.Name -contains 'TrustLevel') -and (@(\$row.TrustLevel) -notcontains 'Trusted')) { \$stale = \$true };",
+          default   => "if ((\$row.PSObject.Properties.Name -contains 'TrustLevel') -and (@(\$row.TrustLevel) -contains 'Trusted')) { \$stale = \$true };",
+        },
+      }
+      # `Explicit` is a known Boolean (default false), so both directions
+      # converge; the property-existence probe keeps older winget builds
+      # (no `Explicit` in the export) on presence-only behaviour.
+      $explicit_stale_check = $explicit ? {
+        true    => "if ((\$row.PSObject.Properties.Name -contains 'Explicit') -and (-not \$row.Explicit)) { \$stale = \$true };",
+        default => "if ((\$row.PSObject.Properties.Name -contains 'Explicit') -and (\$row.Explicit)) { \$stale = \$true };",
+      }
+      $type_stale_check = $safe_source_type ? {
+        undef   => '',
+        default => "if (\$row.Type -ne '${safe_source_type}') { \$stale = \$true };",
+      }
+      $stale_check = "${powershell} -NoProfile -Command \"\$export = & '${winget}' source export; \$rows = @(\$export | Where-Object { \$_ -match '^\\s*\\{'} | ForEach-Object { \$_ | ConvertFrom-Json }); if (-not \$rows) { exit 1 }; \$row = @(\$rows | Where-Object { \$_.Name -ieq '${safe_title}' }); if (-not \$row) { exit 1 }; \$row = \$row[0]; \$stale = \$false; if (\$row.Arg -ne '${safe_url}') { \$stale = \$true }; ${type_stale_check} ${trust_stale_check} ${explicit_stale_check} if (\$stale) { exit 0 } else { exit 1 }\""
+
+      exec { "winget-source-remove-stale-${title}":
+        command => "${powershell} -NoProfile -Command \"& '${winget}' source remove --name '${safe_title}' --disable-interactivity\"",
+        onlyif  => $stale_check,
+        before  => Exec["winget-source-add-${title}"],
+        timeout => 300,
+      }
+
       # The header value never appears on the command line (visible in
       # debug logs, process listings and failure reports): it is passed to
       # the child process via an environment variable instead. `$env:...`

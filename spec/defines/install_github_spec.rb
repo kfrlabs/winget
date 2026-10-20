@@ -103,8 +103,45 @@ describe 'winget::install::github' do
         .with_onlyif(%r{Get-AppxPackage -AllUsers Microsoft\.DesktopAppInstaller})
     end
 
+    it 'also removes the staged provisioned package (Remove-AppxPackage alone fails with 0x80070032 on staged images)' do
+      exec = catalogue.resource('Exec[winget_uninstall_github_winget]')
+      expect(exec[:command]).to match(%r{Remove-AppxProvisionedPackage -Online})
+      expect(exec[:command]).to match(%r{still installed})
+      expect(exec[:onlyif]).to match(%r{Get-AppxProvisionedPackage -Online})
+    end
+
     it 'declares no install exec' do
       is_expected.not_to contain_exec('winget_install_github_winget')
+    end
+  end
+
+  context 'download hardening (issue #39)' do
+    let(:command) { catalogue.resource('Exec[winget_install_github_winget]')[:command] }
+
+    it { is_expected.to compile.with_all_deps }
+
+    it 'downloads into a per-run unique directory instead of a fixed temp file' do
+      expect(command).to match(%r{\[guid\]::NewGuid})
+      expect(command).not_to match(%r{Join-Path \$env:TEMP 'winget\.msixbundle'})
+    end
+
+    it 'restricts the download directory to SYSTEM and Administrators' do
+      expect(command).to match(%r{SetAccessRuleProtection})
+      expect(command).to match(%r{NT AUTHORITY\\SYSTEM})
+      expect(command).to match(%r{BUILTIN\\Administrators})
+    end
+
+    it 'removes the download directory on success and on failure' do
+      expect(command).to match(%r{finally \{ Remove-Item -Recurse -Force .*\$workDir \}})
+    end
+
+    it 'fails closed unless the bundle signature is a valid Microsoft one' do
+      expect(command).to match(%r{Get-AuthenticodeSignature})
+      expect(command).to match(%r{O=Microsoft Corporation})
+    end
+
+    it 'disables the progress bar that slows down Invoke-WebRequest on PS 5.1' do
+      expect(command).to match(%r{\$ProgressPreference = 'SilentlyContinue'})
     end
   end
 end
