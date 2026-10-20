@@ -122,16 +122,16 @@ jobs:
         # Skipped on dry runs (issue #42): validation only, no side effects.
         if: github.event_name != 'workflow_dispatch'
         env:
-          PUPPET_FORGE_API_KEY: ${{ secrets.PUPPET_FORGE_API_KEY }}
+          FORGE_API_KEY: ${{ secrets.FORGE_API_KEY }}
         run: |
-          if [ -z "${PUPPET_FORGE_API_KEY}" ]; then
-            echo '::error::Missing PUPPET_FORGE_API_KEY secret.'
+          if [ -z "${FORGE_API_KEY}" ]; then
+            echo '::error::Missing FORGE_API_KEY secret.'
             exit 1
           fi
           archive="$(ls pkg/*.tar.gz | head -n 1)"
           echo "Uploading ${archive} to the Forge."
           http_code="$(curl -sS -o /tmp/forge_response.json -w '%{http_code}' \
-            -H "Authorization: Bearer ${PUPPET_FORGE_API_KEY}" \
+            -H "Authorization: Bearer ${FORGE_API_KEY}" \
             -F "file=@${archive}" \
             https://forgeapi.puppet.com/v3/releases)"
           cat /tmp/forge_response.json
