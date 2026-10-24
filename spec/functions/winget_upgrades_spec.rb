@@ -47,4 +47,12 @@ describe 'winget::upgrades' do
     allow(PuppetX::Winget::Facts).to receive(:run_upgrade).and_raise(StandardError.new('boom'))
     is_expected.to run.with_params.and_return(nil)
   end
+
+  it 'returns undef when the helper cannot be loaded instead of raising' do
+    # LoadError (ScriptError, not StandardError): partially deployed or
+    # stale module lib on the server must degrade to the fact fallback,
+    # not fail catalog compilation with a 500.
+    allow(PuppetX::Winget::Facts).to receive(:run_upgrade).and_raise(LoadError.new('cannot load such file -- puppet_x/winget/facts'))
+    is_expected.to run.with_params.and_return(nil)
+  end
 end
