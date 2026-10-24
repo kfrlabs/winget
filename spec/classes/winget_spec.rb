@@ -21,6 +21,63 @@ describe 'winget' do
 
       it { is_expected.to contain_class('winget') }
 
+      context 'when winget is present but not executable (path without version)' do
+        # Observed live as SYSTEM in session 0 on Windows Server 2025
+        # (per-user Store install, AppX 0xC0000135): the provider fails
+        # every package closed, so the class warns once at compile time
+        # instead.
+        let(:facts) do
+          os_facts.merge(
+            'winget_path' => 'C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.29.380.0_x64__8wekyb3d8bbwe/winget.exe',
+            'winget_version' => nil
+          )
+        end
+
+        it { is_expected.to compile.with_all_deps }
+
+        it 'warns once that packages will fail closed' do
+          messages = []
+          allow(Puppet).to receive(:warning) { |msg| messages << msg }
+          catalogue
+          expect(messages.grep(%r{found but cannot be executed})).not_to be_empty
+        end
+
+        context 'with ensure => absent' do
+          let(:params) { { ensure: 'absent' } }
+
+          it { is_expected.to compile.with_all_deps }
+
+          it 'stays silent (winget is being removed)' do
+            messages = []
+            allow(Puppet).to receive(:warning) { |msg| messages << msg }
+            catalogue
+            expect(messages.grep(%r{found but cannot be executed})).to be_empty
+          end
+        end
+      end
+
+      context 'when winget is absent (no path, no version)' do
+        let(:facts) { os_facts }
+
+        it { is_expected.to compile.with_all_deps }
+
+        it 'stays silent (bootstrap will install it)' do
+          messages = []
+          allow(Puppet).to receive(:warning) { |msg| messages << msg }
+          catalogue
+          expect(messages.grep(%r{found but cannot be executed})).to be_empty
+        end
+      end
+
+      context 'when winget is executable (path with version)' do
+        it 'stays silent' do
+          messages = []
+          allow(Puppet).to receive(:warning) { |msg| messages << msg }
+          catalogue
+          expect(messages.grep(%r{found but cannot be executed})).to be_empty
+        end
+      end
+
       context 'with ensure => present' do
         let(:params) { { ensure: 'present' } }
 

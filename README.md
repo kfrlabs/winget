@@ -32,6 +32,7 @@ This module provides a `winget` provider for Puppet's built-in `package` type, a
 - **Internet Access**: Required for downloading winget from the Microsoft CDN (`aka.ms/getwinget`) or GitHub (unless using `source_path` for offline installation)
 - **Proxy Support**: Configurable via `proxy` parameter
 - **SYSTEM Account Access**: The SYSTEM account (under which Puppet agent runs) must have read access to `%ProgramFiles%\WindowsApps`. This is required for the path resolver to locate winget.exe.
+- **Machine-wide Winget Runtime**: winget.exe must be *executable* by the agent account, not just present. A per-user Store install is not enough for SYSTEM in session 0 (AppX `0xC0000135`): the host needs the Visual C++ Redistributable (x64) installed machine-wide and the Windows App Runtime framework resolvable machine-wide (provisioned via `Add-AppxProvisionedPackage`), otherwise every package resource fails closed. The `winget` class warns at compile time when it detects this (`winget_path` set but `winget_version` empty); see [Troubleshooting](#troubleshooting).
 
 ## Setup
 
@@ -1042,14 +1043,21 @@ administrator.
 **Cause**: winget.exe crashes on launch in this account/session instead of
 running and reporting a winget error. Observed live on Windows Server 2025
 (App Installer 1.29.380): as SYSTEM in session 0 the process dies with
-`0xC0000135` (`STATUS_DLL_NOT_FOUND`, AppX activation without a user
-context) and no output; Ruby surfaces the nil exit status as exit code 1,
+`0xC0000135` (`STATUS_DLL_NOT_FOUND`, no user context to resolve its
+dependencies) and no output; Ruby surfaces the nil exit status as exit code 1,
 so the report hides the crash. A per-user Microsoft Store install that is
-merely visible via `Get-AppxPackage -AllUsers` is NOT enough: SYSTEM needs
-a machine-provisioned App Installer. Fixing the `%ProgramFiles%\WindowsApps`
-ACL alone does not help there. Execution capability is host- and
-account-dependent: qualify it per host before relying on the SYSTEM agent
-service.
+merely visible via `Get-AppxPackage -AllUsers` is NOT enough, and fixing the
+`%ProgramFiles%\WindowsApps` ACL alone does not help either. Two machine-wide
+prerequisites were identified live by comparing a working host with a broken
+one (same OS build, same Store winget, same ACLs): the Visual C++ Redistributable
+(x64, provides `vcruntime140*.dll` / `msvcp140*.dll` in System32, which session 0
+cannot get from per-user AppX frameworks) and the Windows App Runtime framework
+resolvable machine-wide (provisioned via `Add-AppxProvisionedPackage`).
+Execution capability is host- and account-dependent: qualify it per host before
+relying on the SYSTEM agent service. Since v1.1.0 the `winget` class also warns
+once at compile time when it detects this state (`winget_path` fact set but
+`winget_version` fact empty), so you see one clear message instead of one error
+per package resource.
 
 **Verify** (as an administrator):
 
@@ -1063,13 +1071,25 @@ schtasks /Create /TN winget-sys /TR "winget --version" /SC ONCE /ST 23:59 /RU SY
 
 **Solutions** (pick one):
 
-- Fix the image provisioning (recommended): machine-provision the real App
-  Installer bundle for all users with `Add-AppxProvisionedPackage -Online
-  -PackagePath <bundle> -SkipLicense` (what the module bootstrap falls back
-  to), instead of relying on a per-user Store install. Re-run the agent
-  afterwards: the bootstrap presence guard (`Get-AppxPackage -AllUsers`)
-  is satisfied by the Store install today, so it will not self-heal until
-  the provisioned package is fixed out-of-band.
+- Fix the missing machine-wide runtime (what unblocked the live case):
+  install the official Microsoft Visual C++ Redistributable (x64) on the
+  host and, if `winget` still cannot execute as SYSTEM, provision the
+  Windows App Runtime framework machine-wide:
+
+  ```powershell
+  Invoke-WebRequest -UseBasicParsing -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile C:\Windows\Temp\vc_redist.x64.exe
+  # Check: Get-AuthenticodeSignature ... Status Valid, Microsoft Corporation
+  Start-Process C:\Windows\Temp\vc_redist.x64.exe -ArgumentList '/install','/quiet','/norestart' -Wait
+  # Then, only if needed:
+  Add-AppxProvisionedPackage -Online -PackagePath <WinAppRuntime.msix> -SkipLicense
+  ```
+
+  Verify as SYSTEM (scheduled task): `winget --version` must exit 0 with a
+  version string, and `facter -p winget_version` must return it (nil means
+  still broken). Re-run the agent afterwards.
+- If AppX provisioning itself is blocked (policy-pinned provisioned stub,
+  downgrade refusal — both observed live), keep the Store install as is and
+  fix the execution environment instead (VC++ redist above), or:
 - Run the Puppet agent under a dedicated service account that has a working
   App Execution Alias for winget, instead of SYSTEM.
 - Manage these packages from a scheduled task running in a user context
