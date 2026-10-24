@@ -37,7 +37,12 @@ Puppet::Functions.create_function(:'winget::upgrades') do
     return nil if raw.nil?
 
     PuppetX::Winget::Facts.parse_winget_upgrade(raw)
-  rescue StandardError
+  rescue LoadError, StandardError
+    # LoadError is a ScriptError, not a StandardError: without listing it
+    # explicitly, a helper that cannot be loaded (partially deployed or
+    # stale module lib on the server, duplicate module shadowing) fails
+    # the whole catalog compilation with a 500 instead of degrading to
+    # undef. The class already falls back to the fact rows with a warning.
     nil
   end
 end
