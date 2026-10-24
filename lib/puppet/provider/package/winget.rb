@@ -381,6 +381,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     unless output.exitstatus == PuppetX::Winget::Provider::EXIT_SUCCESS
       message = _('winget list failed with exit code %{code}; installed package state is unknown this run, no changes will be attempted: %{output}')
       Puppet.warning(message % { code: output.exitstatus, output: normalize_output(output) })
+      warn_when_winget_unrunnable(output)
       return nil
     end
 
@@ -389,6 +390,55 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   rescue StandardError => e
     Puppet.warning(_('winget list failed: %{error}; installed package state is unknown this run, no changes will be attempted') % { error: normalize_output(e.message) })
     nil
+  end
+
+  # Probe whether winget can execute at all in this account/session.
+  # Called only when `winget list` already failed with empty output: a
+  # genuine winget error (unknown ID, source failure, ...) always prints
+  # something, while a process crash prints nothing. Observed live on
+  # Windows Server 2025 with App Installer 1.29.380: winget.exe runs fine
+  # for an interactive administrator but fails as SYSTEM in session 0
+  # (0xC0000135 STATUS_DLL_NOT_FOUND, no output; Ruby surfaces the nil
+  # exitstatus as 1, see Runner). A Store per-user install that is merely
+  # visible via Get-AppxPackage -AllUsers is NOT enough: SYSTEM needs a
+  # machine-provisioned App Installer. `winget --version` needs no network
+  # and no sources, so when it also fails empty the account/session cannot
+  # run winget at all and every package resource will keep failing until
+  # the image provisioning (or the agent account) is fixed.
+  # Never raises; best effort only, failures of the probe itself are debug.
+  # @param list_output [Object] Raw `winget list` process output
+  # @return [void]
+  def self.warn_when_winget_unrunnable(list_output)
+    return unless list_output_empty?(list_output)
+
+    require 'puppet_x/winget/runner'
+    begin
+      version_output = PuppetX::Winget::Runner.run([winget_path, '--version'])
+    rescue PuppetX::Winget::Runner::TimeoutError
+      version_output = nil
+    end
+    if version_output
+      version_text = normalize_output(version_output).strip
+      return if version_output.exitstatus.zero? && !version_text.empty?
+    end
+
+    Puppet.warning(_('winget cannot execute in this account/session (winget --version also failed with empty output). ' \
+      'Observed as SYSTEM in session 0 on Windows Server 2025 (AppX 0xC0000135 STATUS_DLL_NOT_FOUND): ' \
+      'a per-user Store install visible to Get-AppxPackage -AllUsers is not runnable by SYSTEM. ' \
+      'Fix the image provisioning (machine-provisioned App Installer via Add-AppxProvisionedPackage for all users), ' \
+      'or run the agent under an account with a working App Execution Alias, ' \
+      'or manage these packages from a scheduled task in a user context instead. See Troubleshooting in the README.'))
+  rescue StandardError => e
+    Puppet.debug("winget executability probe failed: #{e.message}")
+    nil
+  end
+
+  # @param output [Object, nil] Raw `winget list` process output
+  # @return [Boolean] True when there is no usable output to diagnose
+  def self.list_output_empty?(output)
+    normalize_output(output).strip.empty?
+  rescue StandardError
+    true
   end
 
   # Get the set of pinned package IDs, cached at class level for the

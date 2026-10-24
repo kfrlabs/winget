@@ -89,6 +89,13 @@ module PuppetX
 
           reader.join
           exitstatus = wait_thr.value.exitstatus
+          # A crashed process (observed live: winget.exe as SYSTEM in
+          # session 0 on Windows Server 2025 exits with 0xC0000135
+          # STATUS_DLL_NOT_FOUND and no output, surfaced here as a nil
+          # exitstatus) maps to 1 so callers always see an Integer.
+          # Callers that need to tell a crash apart from a genuine
+          # winget error must check for empty output alongside the exit
+          # code (see fetch_instances_list).
           Puppet::Util::Execution::ProcessOutput.new(output, exitstatus || 1)
         ensure
           begin
