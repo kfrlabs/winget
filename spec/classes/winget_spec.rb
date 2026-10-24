@@ -3,6 +3,18 @@
 require 'spec_helper'
 
 describe 'winget' do
+  # Collects :warning messages emitted while compiling the catalogue.
+  # Puppet's warning() routes through Puppet::Util::Log.log_func (not
+  # Puppet.warning), so stub that entry point instead.
+  def collect_warnings
+    logged = []
+    allow(Puppet::Util::Log).to receive(:log_func) do |_scope, level, values|
+      logged.concat(Array(values).map(&:to_s)) if level == :warning
+    end
+    catalogue
+    logged
+  end
+
   on_supported_os(
     hardwaremodels: ['x86_64'],
     supported_os: [
@@ -36,10 +48,7 @@ describe 'winget' do
         it { is_expected.to compile.with_all_deps }
 
         it 'warns once that packages will fail closed' do
-          messages = []
-          allow(Puppet).to receive(:warning) { |msg| messages << msg }
-          catalogue
-          expect(messages.grep(%r{found but cannot be executed})).not_to be_empty
+          expect(collect_warnings.grep(%r{found but cannot be executed})).not_to be_empty
         end
 
         context 'with ensure => absent' do
@@ -48,10 +57,7 @@ describe 'winget' do
           it { is_expected.to compile.with_all_deps }
 
           it 'stays silent (winget is being removed)' do
-            messages = []
-            allow(Puppet).to receive(:warning) { |msg| messages << msg }
-            catalogue
-            expect(messages.grep(%r{found but cannot be executed})).to be_empty
+            expect(collect_warnings.grep(%r{found but cannot be executed})).to be_empty
           end
         end
       end
@@ -62,19 +68,13 @@ describe 'winget' do
         it { is_expected.to compile.with_all_deps }
 
         it 'stays silent (bootstrap will install it)' do
-          messages = []
-          allow(Puppet).to receive(:warning) { |msg| messages << msg }
-          catalogue
-          expect(messages.grep(%r{found but cannot be executed})).to be_empty
+          expect(collect_warnings.grep(%r{found but cannot be executed})).to be_empty
         end
       end
 
       context 'when winget is executable (path with version)' do
         it 'stays silent' do
-          messages = []
-          allow(Puppet).to receive(:warning) { |msg| messages << msg }
-          catalogue
-          expect(messages.grep(%r{found but cannot be executed})).to be_empty
+          expect(collect_warnings.grep(%r{found but cannot be executed})).to be_empty
         end
       end
 
