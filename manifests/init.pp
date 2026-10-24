@@ -174,6 +174,17 @@ class winget (
     $real_ensure = $ensure
   }
 
+  # winget.exe was located but cannot be executed in this account/session
+  # (observed as SYSTEM in session 0 on Windows Server 2025 with a per-user
+  # Store install: AppX 0xC0000135, or a missing machine-wide VC++
+  # redistributable / WinAppRuntime framework): every package resource will
+  # fail closed until the image provisioning or the agent account is fixed.
+  # Facts are collected at run start, so a bootstrap that just installed
+  # winget reports both facts as nil here (no warning) and converges.
+  if $real_ensure != 'absent' and $facts['winget_path'] and !$facts['winget_version'] {
+    warning('winget: winget.exe was found but cannot be executed in this account/session (winget --version fails); package resources will fail closed until this is fixed (machine-provisioned App Installer, machine-wide VC++ redistributable / WinAppRuntime framework, or agent running as an account with a working App Execution Alias). See Troubleshooting in the README.')
+  }
+
   # Main winget installation logic
   if $enable_winget {
     if $real_ensure == 'absent' {

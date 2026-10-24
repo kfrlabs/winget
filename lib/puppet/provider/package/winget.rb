@@ -424,8 +424,10 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
     Puppet.warning(_('winget cannot execute in this account/session (winget --version also failed with empty output). ' \
       'Observed as SYSTEM in session 0 on Windows Server 2025 (AppX 0xC0000135 STATUS_DLL_NOT_FOUND): ' \
-      'a per-user Store install visible to Get-AppxPackage -AllUsers is not runnable by SYSTEM. ' \
-      'Fix the image provisioning (machine-provisioned App Installer via Add-AppxProvisionedPackage for all users), ' \
+      'a per-user Store install visible to Get-AppxPackage -AllUsers is not runnable by SYSTEM, and a missing ' \
+      'machine-wide Visual C++ Redistributable (vcruntime140/msvcp140 absent from System32) crashes the launch the same way. ' \
+      'Fix the image provisioning (machine-provisioned App Installer via Add-AppxProvisionedPackage for all users, ' \
+      'VC++ redistributable installed machine-wide), ' \
       'or run the agent under an account with a working App Execution Alias, ' \
       'or manage these packages from a scheduled task in a user context instead. See Troubleshooting in the README.'))
   rescue StandardError => e

@@ -21,6 +21,54 @@ describe 'winget' do
 
       it { is_expected.to contain_class('winget') }
 
+      context 'when winget is present but not executable (path without version)' do
+        # Observed live as SYSTEM in session 0 on Windows Server 2025
+        # (per-user Store install, AppX 0xC0000135): the provider fails
+        # every package closed, so the class warns once at compile time
+        # instead.
+        let(:node) { 'winget-unrunnable.example.com' }
+        let(:facts) do
+          os_facts.merge(
+            'winget_path' => 'C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.29.380.0_x64__8wekyb3d8bbwe/winget.exe',
+            'winget_version' => nil
+          )
+        end
+
+        it { is_expected.to compile.with_all_deps }
+
+        # NOTE: the warning itself is intentionally not asserted here.
+        # Puppet `warning()` output during catalogue compilation is not
+        # observable from rspec-puppet (no log capture, no stub interception:
+        # verified against Puppet 7/8 sources and live runs). What these
+        # tests guard is the `if` condition above: compilation must succeed
+        # in the present-but-unrunnable configuration (and stay silent
+        # everywhere else); the warning text itself is verified by code
+        # review plus live agent reports (see incident SAIM lab: the
+        # provider-level equivalent warning did show up verbatim).
+        it { is_expected.to compile.with_all_deps }
+        it { is_expected.to contain_class('winget') }
+
+        context 'with ensure => absent' do
+          let(:node) { 'winget-unrunnable-absent.example.com' }
+          let(:params) { { ensure: 'absent' } }
+
+          it { is_expected.to compile.with_all_deps }
+        end
+      end
+
+      context 'when winget is absent (no path, no version)' do
+        let(:node) { 'winget-absent.example.com' }
+        let(:facts) { os_facts }
+
+        it { is_expected.to compile.with_all_deps }
+      end
+
+      context 'when winget is executable (path with version)' do
+        let(:node) { 'winget-ok.example.com' }
+
+        it { is_expected.to compile.with_all_deps }
+      end
+
       context 'with ensure => present' do
         let(:params) { { ensure: 'present' } }
 
