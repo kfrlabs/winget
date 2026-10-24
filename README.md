@@ -1029,6 +1029,56 @@ retried.
 - Run `winget list` by hand on the node to diagnose a persistent failure
 - Check `winget --info` / `winget --open-logs` for a corrupted source index
 
+### winget list fails with exit code 1 and empty output (SYSTEM cannot execute winget)
+
+**Symptom**: Every `winget` package resource fails with `Cannot determine
+whether package '<id>' is installed: winget list failed this run`, preceded
+by `winget list failed with exit code 1; ...: ` (empty output, no winget
+text at all), plus `winget cannot execute in this account/session
+(winget --version also failed ...)`. `facter -p winget_version` run as
+SYSTEM returns nothing, while the same commands work for an interactive
+administrator.
+
+**Cause**: winget.exe crashes on launch in this account/session instead of
+running and reporting a winget error. Observed live on Windows Server 2025
+(App Installer 1.29.380): as SYSTEM in session 0 the process dies with
+`0xC0000135` (`STATUS_DLL_NOT_FOUND`, AppX activation without a user
+context) and no output; Ruby surfaces the nil exit status as exit code 1,
+so the report hides the crash. A per-user Microsoft Store install that is
+merely visible via `Get-AppxPackage -AllUsers` is NOT enough: SYSTEM needs
+a machine-provisioned App Installer. Fixing the `%ProgramFiles%\WindowsApps`
+ACL alone does not help there. Execution capability is host- and
+account-dependent: qualify it per host before relying on the SYSTEM agent
+service.
+
+**Verify** (as an administrator):
+
+```powershell
+# 1. Does SYSTEM resolve a path but get no version? (nil = cannot execute)
+schtasks /Create /TN winget-probe /TR "facter -p winget_path winget_version" /SC ONCE /ST 23:59 /RU SYSTEM /F
+schtasks /Run /TN winget-probe  # then read the task output: winget_version empty confirms it
+# 2. Direct launch as SYSTEM: expect exit -1073741515 (0xC0000135), no output
+schtasks /Create /TN winget-sys /TR "winget --version" /SC ONCE /ST 23:59 /RU SYSTEM /F
+```
+
+**Solutions** (pick one):
+
+- Fix the image provisioning (recommended): machine-provision the real App
+  Installer bundle for all users with `Add-AppxProvisionedPackage -Online
+  -PackagePath <bundle> -SkipLicense` (what the module bootstrap falls back
+  to), instead of relying on a per-user Store install. Re-run the agent
+  afterwards: the bootstrap presence guard (`Get-AppxPackage -AllUsers`)
+  is satisfied by the Store install today, so it will not self-heal until
+  the provisioned package is fixed out-of-band.
+- Run the Puppet agent under a dedicated service account that has a working
+  App Execution Alias for winget, instead of SYSTEM.
+- Manage these packages from a scheduled task running in a user context
+  instead of the SYSTEM agent (e.g. a `scheduled_task` resource running
+  `winget install` as that user), and remove them from the SYSTEM catalog.
+- As a last resort, stop managing winget packages from the SYSTEM agent on
+  affected hosts: the provider fails closed on purpose (no spurious
+  reinstalls), but nothing will converge there until execution works.
+
 ### `winget::pin`, `winget::source`, `winget::sources`, `winget::configure` or `winget::settings` do nothing on the first run (warn and converge next run)
 
 **Symptom**: No exec/file resource shows up in the report for one of these

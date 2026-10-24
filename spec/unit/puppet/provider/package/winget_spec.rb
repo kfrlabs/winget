@@ -1082,6 +1082,43 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       expect(described_class.list_unavailable?).to be true
     end
 
+    context 'when winget list crashes with empty output (SYSTEM session 0, 0xC0000135)' do
+      it 'warns that winget cannot execute when winget --version also fails empty' do
+        warnings = []
+        allow(Puppet).to receive(:warning) { |msg| warnings << msg }
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
+          Puppet::Util::Execution::ProcessOutput.new('', 1),
+          Puppet::Util::Execution::ProcessOutput.new('', 1),
+        )
+        expect(described_class.instances_list).to eq({})
+        expect(described_class.list_unavailable?).to be true
+        expect(warnings.grep(%r{winget list failed with exit code 1})).not_to be_empty
+        expect(warnings.grep(%r{cannot execute in this account/session})).not_to be_empty
+      end
+
+      it 'does not warn about execution when winget --version still works' do
+        warnings = []
+        allow(Puppet).to receive(:warning) { |msg| warnings << msg }
+        allow(PuppetX::Winget::Runner).to receive(:run).and_return(
+          Puppet::Util::Execution::ProcessOutput.new('', 1),
+          Puppet::Util::Execution::ProcessOutput.new("1.29.380\n", 0),
+        )
+        expect(described_class.instances_list).to eq({})
+        expect(described_class.list_unavailable?).to be true
+        expect(warnings.grep(%r{winget list failed with exit code 1})).not_to be_empty
+        expect(warnings.grep(%r{cannot execute in this account/session})).to be_empty
+      end
+
+      it 'does not probe executability when the list failure has output' do
+        allow(Puppet).to receive(:warning)
+        expect(PuppetX::Winget::Runner).to receive(:run).once.and_return(
+          Puppet::Util::Execution::ProcessOutput.new('Failed when searching source', 1),
+        )
+        expect(described_class.instances_list).to eq({})
+        expect(described_class.list_unavailable?).to be true
+      end
+    end
+
     it 'does not cache a listing that raised' do
       allow(Puppet).to receive(:warning)
       allow(PuppetX::Winget::Runner).to receive(:run).and_raise(StandardError.new('boom'))
