@@ -17,7 +17,7 @@
 # exists on disk for interactive users (File.exist? is true) but SYSTEM cannot
 # execute another user's AppX alias (0xC0000135 / Access denied), so resolving
 # to it would report a working winget_path that fails on every invocation.
-# rubocop:disable Style/ClassAndModuleChildren
+# rubocop:disable-next Style/ClassAndModuleChildren
 module PuppetX
   module Winget
     # PathResolver locates the winget executable.
@@ -148,4 +148,3 @@ module PuppetX
     end
   end
 end
-# rubocop:enable Style/ClassAndModuleChildren

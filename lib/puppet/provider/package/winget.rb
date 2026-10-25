@@ -24,7 +24,7 @@ require 'puppet/provider/package'
 # https://github.com/microsoft/winget-cli/blob/master/doc/windows/package-manager/winget/returnCodes.md
 # via `winget error --output`. Hex literals below are the unsigned form of
 # the (signed decimal) codes winget reports.)
-# rubocop:disable Style/ClassAndModuleChildren
+# rubocop:disable-next Style/ClassAndModuleChildren
 unless defined?(::PuppetX::Winget::Provider::EXIT_SUCCESS)
   module PuppetX
     module Winget
@@ -75,7 +75,6 @@ unless defined?(::PuppetX::Winget::Provider::EXIT_SUCCESS)
     end
   end
 end
-# rubocop:enable Style/ClassAndModuleChildren
 
 Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) do
   # @api private
@@ -463,7 +462,7 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
 
     require 'puppet_x/winget/facts'
     ids = PuppetX::Winget::Facts.pinned_ids(winget_path)
-    ids.each_with_object({}) { |id, memo| memo[id.downcase] = true }
+    ids.to_h { |id| [id.downcase, true] }
   rescue StandardError => e
     Puppet.debug("winget pin list failed: #{e.message}")
     {}

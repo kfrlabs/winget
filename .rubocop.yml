@@ -117,10 +117,6 @@ Bundler/GemFilename:
   Enabled: false
 Bundler/InsecureProtocolSource:
   Enabled: false
-Capybara/CurrentPathExpectation:
-  Enabled: false
-Capybara/VisibilityMatcher:
-  Enabled: false
 Gemspec/DuplicatedAssignment:
   Enabled: false
 Gemspec/OrderedDependencies:
@@ -385,7 +381,7 @@ Style/CommentedKeyword:
   Enabled: false
 Style/Dir:
   Enabled: false
-Style/DoubleCopDisableDirective:
+Lint/CopDirectiveSyntax:
   Enabled: false
 Style/EmptyBlockParameter:
   Enabled: false
@@ -480,16 +476,6 @@ Style/TrailingCommaInHashLiteral:
 Style/TrailingMethodEndStatement:
   Enabled: false
 Style/UnpackFirst:
-  Enabled: false
-Capybara/MatchStyle:
-  Enabled: false
-Capybara/NegationMatcher:
-  Enabled: false
-Capybara/SpecificActions:
-  Enabled: false
-Capybara/SpecificFinders:
-  Enabled: false
-Capybara/SpecificMatcher:
   Enabled: false
 Gemspec/DeprecatedAttributeAssignment:
   Enabled: false

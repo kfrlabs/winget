@@ -14,7 +14,7 @@ require 'open3'
 # Windows, `KILL` on POSIX) and a `TimeoutError` is raised. Callers decide:
 # the provider turns it into a `Puppet::Error`, facts swallow it and return
 # `nil`/`[]` (facts never raise).
-# rubocop:disable Style/ClassAndModuleChildren
+# rubocop:disable-next Style/ClassAndModuleChildren
 module PuppetX
   module Winget
     # Runner executes winget commands with a timeout, killing the process
@@ -132,4 +132,3 @@ module PuppetX
     end
   end
 end
-# rubocop:enable Style/ClassAndModuleChildren
