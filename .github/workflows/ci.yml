@@ -1,5 +1,5 @@
 # This file is managed by hand (not PDK-synced) so the pipeline can cover
-# puppet apply on Windows, REFERENCE.md freshness and Puppet 7/8 matrix testing.
+# puppet apply on Windows, REFERENCE.md freshness and Puppet 8 / OpenVox 8 matrix testing.
 name: CI
 
 on:
@@ -61,13 +61,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Puppet 8 is the primary target; Puppet 7 is kept for compatibility.
+          # Puppet 8 is the target; OpenVox 8 below covers the
+          # OpenVox-compatible API (issue #44).
           - name: 'Puppet ~> 8.0'
             puppet_version: '~> 8.0'
             ruby: '3.2'
-          - name: 'Puppet ~> 7.0'
-            puppet_version: '~> 7.0'
-            ruby: '2.7'
           # OpenVox 8 (issue #44): the README claims OpenVox 8 compatibility
           # and metadata.json allows Puppet >= 7 < 9, whose API OpenVox 8
           # implements; this entry installs the `openvox` gem instead of

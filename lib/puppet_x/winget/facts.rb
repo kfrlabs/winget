@@ -19,7 +19,7 @@ require 'puppet_x/winget/path_resolver'
 # inventory (`WINGET_UPGRADES_ENABLED=true`, disabled by default so agent
 # runs that do not declare the class never pay the cost). `winget_pins` is
 # a fast local `winget pin list` query and stays always enabled.
-# rubocop:disable Style/ClassAndModuleChildren
+# rubocop:disable-next Style/ClassAndModuleChildren
 module PuppetX
   module Winget
     # Facts resolves winget facts using the shared path resolver.
@@ -485,7 +485,7 @@ module PuppetX
         def wide_char?(ord)
           return true if ord >= 0x10000
 
-          WIDE_RANGES.any? { |first, last| ord >= first && ord <= last }
+          WIDE_RANGES.any? { |first, last| ord.between?(first, last) }
         end
 
         # Terminal display width of a string (wide chars count 2).
@@ -605,4 +605,3 @@ module PuppetX
     end
   end
 end
-# rubocop:enable Style/ClassAndModuleChildren
