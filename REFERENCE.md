@@ -789,7 +789,7 @@ Note: this parameter intentionally shares its name with the Puppet
 `schedule` metaparameter. In a resource-like class declaration (`class {
 'winget::upgrade': schedule => '...', }`) the class parameter wins and is
 forwarded as the metaparameter to the managed packages; this is covered
-by unit tests on Puppet 7 and 8.
+by unit tests on Puppet 8 and OpenVox 8.
 
 Default value: `undef`
 

@@ -5,7 +5,7 @@
 [![Puppet Forge version](https://img.shields.io/puppetforge/v/kfrlabs/winget.svg)](https://forge.puppet.com/modules/kfrlabs/winget)
 [![Puppet Forge downloads](https://img.shields.io/puppetforge/dt/kfrlabs/winget.svg)](https://forge.puppet.com/modules/kfrlabs/winget)
 [![License: Apache-2.0](https://img.shields.io/github/license/kfrlabs/winget.svg)](LICENSE)
-[![Puppet >= 7.0, < 9.0](https://img.shields.io/badge/puppet-%3E%3D7.0_%3C9.0-blue.svg)](metadata.json)
+[![Puppet >= 8.0, < 9.0](https://img.shields.io/badge/puppet-%3E%3D8.0_%3C9.0-blue.svg)](metadata.json)
 
 Puppet module for managing Windows packages via winget (Windows Package Manager).
 
@@ -26,7 +26,7 @@ This module provides a `winget` provider for Puppet's built-in `package` type, a
 
 ## Requirements
 
-- **Puppet**: >= 7.0.0 < 9.0.0 (Puppet 7/8, OpenVox 8 compatible)
+- **Puppet**: >= 8.0.0 < 9.0.0 (Puppet 8, OpenVox 8 compatible)
 - **Operating System**: Windows 10 1809 (build 17763) or later, Windows Server 2022 or 2025 (Windows Server 2019: best effort, untested — see [Windows Server Support](#windows-server-support))
 - **Architecture**: x64 and arm64 supported
 - **Internet Access**: Required for downloading winget from the Microsoft CDN (`aka.ms/getwinget`) or GitHub (unless using `source_path` for offline installation)
