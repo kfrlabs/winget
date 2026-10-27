@@ -31,18 +31,18 @@ group :development do
   gem "simplecov-console", '~> 0.9',             require: false
   gem "puppet-debugger", '~> 1.0',               require: false
   gem "rubocop", '~> 1.92.0',                    require: false
-  gem "rubocop-performance", '1.23.1',         require: false
-  gem "rubocop-rspec", '3.0.0',               require: false
+  gem "rubocop-performance", '1.27.0',         require: false
+  gem "rubocop-rspec", '3.10.2',               require: false
   gem "rb-readline", '= 0.5.5',                  require: false, platforms: [:mswin, :mingw, :x64_mingw]
-  gem "rexml", '>= 3.0.0', '< 3.2.7',            require: false
+  gem "rexml", '>= 3.0.0', '< 3.4.5',            require: false
 end
 group :development, :release_prep do
   gem "puppet-strings", '~> 4.0',         require: false
   gem "puppetlabs_spec_helper", '~> 8.0', require: false
-  gem "puppet-blacksmith", '~> 7.0',      require: false
+  gem "puppet-blacksmith", '~> 9.1',      require: false
 end
 group :system_tests do
-  gem "puppet_litmus", '~> 1.0',   require: false, platforms: [:ruby, :x64_mingw]
+  gem "puppet_litmus", '~> 2.8',   require: false, platforms: [:ruby, :x64_mingw]
   gem "CFPropertyList", '< 3.0.7', require: false, platforms: [:mswin, :mingw, :x64_mingw]
   gem "serverspec", '~> 2.41',     require: false
 end
