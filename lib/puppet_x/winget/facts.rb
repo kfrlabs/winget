@@ -10,7 +10,8 @@ require 'puppet_x/winget/path_resolver'
 # Helpers never raise: they return nil/[] when winget is absent or when any
 # error occurs. Note `winget_upgrades` shells out
 # to `winget upgrade` (source round-trips, a few seconds) with memoized
-# output per process and per mode (forced vs. gated, see {.upgrade_output}).
+# output per resolution for gated rows and pin list output, and per process
+# for forced rows, separated per mode (forced vs. gated, see {.upgrade_output}).
 # It runs on demand only: the
 # `winget::upgrades` function (called by `Class['winget::upgrade']`) forces
 # an uncached on-demand enumeration (no per-process memoization, so one
@@ -43,6 +44,20 @@ module PuppetX
         # Clear memoized command output (primarily for testing).
         def reset!
           @upgrade_output_forced = nil
+          @upgrade_output_gated = nil
+          @pins_output = nil
+        end
+
+        # Clear the per-resolution caches (gated upgrade output and pin
+        # list output). Called at the start of each fact resolution so two
+        # consecutive resolutions re-run `winget upgrade` / `winget pin
+        # list` instead of reusing stale process-global output, while
+        # repeated helper calls within one resolution still share a single
+        # invocation. The forced (on-demand function) cache is untouched:
+        # server-side callers use the uncached {.run_upgrade} per
+        # compilation (see the `winget::upgrades` function), never the
+        # memoized forced output across nodes.
+        def clear_resolution_cache!
           @upgrade_output_gated = nil
           @pins_output = nil
         end
@@ -108,8 +123,8 @@ module PuppetX
           false
         end
 
-        # Raw `winget upgrade` output, memoized per process and per mode so the
-        # `winget_upgrades` fact only shells out once. Forced (on-demand
+        # Raw `winget upgrade` output, memoized per resolution and per mode so
+        # the `winget_upgrades` fact only shells out once per resolution. Forced (on-demand
         # function) and gated (opt-in fact) rows use separate caches: a
         # forced enumeration must never satisfy a later gated fact call when
         # the inventory gate is disabled, and a gated `nil` (disabled/absent)
@@ -117,6 +132,10 @@ module PuppetX
         # {.upgrades_enabled?} so toggling the opt-in off hides stale rows.
         # Only memoized for the default (nil) path: explicit path
         # overrides (used in tests) always run fresh.
+        # Per-resolution scoping: each fact resolution calls
+        # {.clear_resolution_cache!} first, so consecutive resolutions
+        # re-run winget while repeated calls within one resolution share a
+        # single invocation.
         # Per-process memoization is safe on agents (one node per process)
         # but not on Puppet Server, where one server process compiles
         # catalogs for many nodes: cached forced output from node A must
@@ -261,8 +280,11 @@ module PuppetX
           rows
         end
 
-        # Raw `winget pin list` output, memoized per process (nil path only;
-        # explicit path overrides always run fresh). Never raises.
+        # Raw `winget pin list` output, memoized per resolution (nil path only;
+        # explicit path overrides always run fresh). Each fact resolution
+        # calls {.clear_resolution_cache!} first, so consecutive resolutions
+        # re-run winget while repeated calls within one resolution share a
+        # single invocation. Never raises.
         # @param path [String, nil] Optional override for the winget path (testing)
         # @return [String, nil] Raw command output, or nil when absent/failed
         def pins_output(path = nil)

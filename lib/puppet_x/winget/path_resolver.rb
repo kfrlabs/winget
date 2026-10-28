@@ -24,8 +24,14 @@ module PuppetX
     class PathResolver
       class << self
         # @return [String, nil] Absolute path to winget.exe, or nil if not found
+        # Cached only while the file still exists: a Store upgrade moves
+        # winget to a new versioned folder, so a stale entry must trigger
+        # a fresh resolution instead of returning a deleted path.
         def winget_path
-          @winget_path ||= resolve_winget_path
+          return @winget_path if usable_path?(@winget_path)
+
+          fresh = resolve_winget_path
+          @winget_path = usable_path?(fresh) ? fresh : nil
         end
 
         # Clear memoized value (primarily for testing)
@@ -35,8 +41,21 @@ module PuppetX
 
         private
 
+        # Whether a cached or freshly resolved path is still usable.
+        # A failed existence check counts as stale, never as an error.
+        def usable_path?(path)
+          return false unless path.is_a?(String) && !path.empty?
+
+          File.exist?(path)
+        rescue StandardError
+          false
+        end
+
         def resolve_winget_path
-          from_windows_apps || from_path
+          windows = from_windows_apps
+          return windows if usable_path?(windows)
+
+          from_path
         rescue StandardError
           # Never raise at catalog load time; log and return nil
           nil

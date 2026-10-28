@@ -41,6 +41,10 @@ Facter.add('winget_upgrades') do
   confine kernel: :windows
 
   setcode do
+    # Per-resolution scoping: drop the previous resolution's cached output
+    # so this resolution re-runs winget once (repeated helper calls within
+    # this resolution still share that single invocation).
+    PuppetX::Winget::Facts.clear_resolution_cache!
     PuppetX::Winget::Facts.winget_upgrades
   end
 end

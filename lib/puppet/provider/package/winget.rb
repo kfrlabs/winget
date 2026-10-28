@@ -100,8 +100,14 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
   # @!scope self
   class << self
     # @return [String, nil] Memoized path to winget.exe
+    # Returns the cached entry only while the file still exists; a deleted
+    # (e.g. Store-upgraded) path triggers a fresh delegation to the
+    # path resolver instead of reusing the stale entry.
     def winget_path
-      @winget_path ||= resolve_winget_path
+      return @winget_path if usable_path?(@winget_path)
+
+      fresh = resolve_winget_path
+      @winget_path = usable_path?(fresh) ? fresh : nil
     end
 
     # Reset memoized state (for testing)
@@ -176,6 +182,18 @@ Puppet::Type.type(:package).provide(:winget, parent: Puppet::Provider::Package) 
     def resolve_winget_path
       require 'puppet_x/winget/path_resolver'
       PuppetX::Winget::PathResolver.winget_path
+    rescue StandardError
+      nil
+    end
+
+    # Whether a cached or freshly delegated path is still usable.
+    # A failed existence check counts as stale, never as an error.
+    def usable_path?(path)
+      return false unless path.is_a?(String) && !path.empty?
+
+      File.exist?(path)
+    rescue StandardError
+      false
     end
   end
 
