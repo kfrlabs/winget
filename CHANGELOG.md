@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `winget::upgrade` master/agent discoverability (issue #67): prominent
+  execution-model / compatibility table (`puppet apply`, master/agent with
+  fact, master/agent without fact) in the class header and README, fallback
+  warning now names the exact `WINGET_UPGRADES_ENABLED=true` switch, and the
+  Deferred/`exec` agent-side alternative is evaluated and documented
+  (rejected: keeps upgrades as regular `package` resources; Bolt tasks
+  cover on-demand agent-side execution).
+
 ## [1.1.0] - 2026-10-19
 
 ### Added
