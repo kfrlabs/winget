@@ -136,4 +136,23 @@ describe 'winget::pin' do
     it { is_expected.to compile.with_all_deps }
     it { is_expected.to have_exec_resource_count(0) }
   end
+
+  context 'with a double quote in the title (issue #74)' do
+    let(:title) { 'Google."Chrome' }
+
+    it { expect { catalogue }.to raise_error(Puppet::Error, %r{double quotes}) }
+  end
+
+  context 'with a double quote in the version (issue #74)' do
+    let(:params) { { version: '1.2."*' } }
+
+    it { expect { catalogue }.to raise_error(Puppet::Error, %r{double quotes}) }
+  end
+
+  context 'with a double quote in the source (issue #74)' do
+    let(:params) { { source: 'wing"et' } }
+
+    it { expect { catalogue }.to raise_error(Puppet::Error, %r{double quotes}) }
+  end
+
 end

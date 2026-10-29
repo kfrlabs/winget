@@ -70,6 +70,21 @@ define winget::pin (
   $powershell = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
   $winget = $facts['winget_path']
 
+  # Hardening (issue #74): interpolated values sit in single-quoted
+  # PowerShell literals inside a double-quoted -Command string, so a double
+  # quote would terminate the outer string and break (or alter) the command.
+  # Double quotes are never valid in IDs, versions or source names: fail
+  # fast at compile time instead of breaking confusingly at runtime.
+  if $title =~ /"/ {
+    fail("winget::pin[${title}]: title (package ID) must not contain double quotes (they terminate the PowerShell -Command string).")
+  }
+  if $version and $version =~ /"/ {
+    fail("winget::pin[${title}]: version must not contain double quotes (they terminate the PowerShell -Command string).")
+  }
+  if $source and $source =~ /"/ {
+    fail("winget::pin[${title}]: source must not contain double quotes (they terminate the PowerShell -Command string).")
+  }
+
   if $winget {
     # Escape single quotes for PowerShell single-quoted literals.
     $safe_title = regsubst($title, "'", "''", 'G')

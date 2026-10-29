@@ -60,6 +60,15 @@ class winget::settings (
     fail('The winget::settings class is only supported on Windows operating systems.')
   }
 
+  # Hardening (issue #74): the path is interpolated into a single-quoted
+  # PowerShell literal inside a double-quoted -Command string, so a double
+  # quote would terminate the outer string and break (or alter) the command.
+  # Double quotes are never valid in Windows paths: fail fast at compile
+  # time instead of breaking confusingly at runtime.
+  if $settings_path and $settings_path =~ /"/ {
+    fail('winget::settings: settings_path must not contain double quotes (they terminate the PowerShell -Command string).')
+  }
+
   if $experimental_features.empty {
     $merged = $config
   } else {

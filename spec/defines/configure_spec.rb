@@ -134,4 +134,17 @@ describe 'winget::configure' do
       is_expected.to contain_exec('winget-configure-C:/Configs/workstation.winget').with_timeout(1800)
     end
   end
+
+  context 'with a double quote in the source path (issue #74)' do
+    let(:title) { 'C:/Configs/work"station.winget' }
+
+    it { expect { catalogue }.to raise_error(Puppet::Error, %r{double quotes}) }
+  end
+
+  context 'with a double quote in the source URL (issue #74)' do
+    let(:params) { { source: 'https://example.com/a"b.winget' } }
+
+    it { expect { catalogue }.to raise_error(Puppet::Error, %r{double quotes}) }
+  end
+
 end

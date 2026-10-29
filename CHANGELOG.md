@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Double quotes in values interpolated into PowerShell `-Command` strings
+  fail fast at compile time (issue #74): `winget::pin` (title, version,
+  source), `winget::source` (title, url, source_type),
+  `winget::configure` (source), `winget::settings` (settings_path),
+  `winget::sources` (default_sources, entries keys) and
+  `winget::install::local` (source_path, dependencies) now reject `"` with
+  a clear error instead of terminating the outer `-Command "..."` wrapper
+  and breaking (or altering) the command at runtime. Valid values are
+  unaffected; the provider (array-form execution) and the `Sensitive`
+  header (environment-only) were already immune.
+
+### Fixed
 - Short-form `ensure` typos fail at compile time (issue #71): new shared
   `Winget::PackageEnsure` alias used by both the shorthand string and the
   `ensure` key of `Winget::Package`, so `'presnt'` is rejected with a

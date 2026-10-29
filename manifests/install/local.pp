@@ -38,6 +38,20 @@ define winget::install::local (
   Optional[String] $version   = undef,
   Array[String] $dependencies = []
 ) {
+  # Hardening (issue #74): interpolated paths sit in single-quoted
+  # PowerShell literals inside a double-quoted -Command string, so a double
+  # quote would terminate the outer string and break (or alter) the command.
+  # Double quotes are never valid in Windows paths: fail fast at compile
+  # time instead of breaking confusingly at runtime.
+  if $source_path =~ /"/ {
+    fail("winget::install::local[${title}]: source_path must not contain double quotes (they terminate the PowerShell -Command string).")
+  }
+  $dependencies.each |$dep| {
+    if $dep =~ /"/ {
+      fail("winget::install::local[${title}]: dependencies must not contain double quotes (they terminate the PowerShell -Command string).")
+    }
+  }
+
   if $version {
     warning("winget::install::local[${title}]: the version parameter is deprecated, use ensure => '<version>' instead (still honored for backward compatibility).")
   }

@@ -53,6 +53,15 @@ define winget::configure (
   $powershell = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
   $winget = $facts['winget_path']
 
+  # Hardening (issue #74): the source is interpolated into a single-quoted
+  # PowerShell literal inside a double-quoted -Command string, so a double
+  # quote would terminate the outer string and break (or alter) the command.
+  # Double quotes are never valid in paths or URLs: fail fast at compile
+  # time instead of breaking confusingly at runtime.
+  if $source =~ /"/ {
+    fail("winget::configure[${title}]: source must not contain double quotes (they terminate the PowerShell -Command string).")
+  }
+
   # Trust guard (issue #40): fail closed on anything that is not an absolute
   # local path / UNC share or an https:// URL. A URL with any other scheme
   # (including cleartext http://) or a relative path never reaches the exec.

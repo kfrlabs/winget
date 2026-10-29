@@ -19,6 +19,18 @@ describe 'winget::sources' do
       it { is_expected.to compile.with_all_deps }
       it { is_expected.to have_winget__source_resource_count(0) }
 
+      context 'with a double quote in default_sources (issue #74)' do
+        let(:params) { { default_sources: ['msstore', 'a"b'], reset_defaults: true } }
+
+        it { expect { catalogue }.to raise_error(Puppet::Error, %r{double quotes}) }
+      end
+
+      context 'with a double quote in an entries key (issue #74)' do
+        let(:params) { { entries: { 'con"toso' => 'https://winget.contoso.example.com/cache' } } }
+
+        it { expect { catalogue }.to raise_error(Puppet::Error, %r{double quotes}) }
+      end
+
       context 'with a shorthand URL entry' do
         let(:params) { { entries: { 'contoso' => 'https://winget.contoso.example.com/cache' } } }
 
