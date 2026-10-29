@@ -625,6 +625,21 @@ Default value: `['msstore', 'winget', 'winget-font']`
 
 ### <a name="winget--upgrade"></a>`winget::upgrade`
 
+Execution model / compatibility (read first under master/agent):
+
+| Setup | Behaviour |
+| ----- | --------- |
+| `puppet apply` | Fully functional: `winget::upgrades()` runs on the node where winget exists. |
+| master/agent with `winget_upgrades` fact enabled (`WINGET_UPGRADES_ENABLED=true` on the agent) | Functional: on-demand enumeration runs on the server (no winget, returns `undef`), the class falls back to the fact rows with a warning. |
+| master/agent without the fact (default) | Manages nothing: both enumeration (`undef` on the server) and fact rows are empty; the class logs a warning and declares no `package` resources. Enable the fact (see below) or run `puppet apply`. |
+
+Agent-side execution decision: a Deferred function or `exec`-based upgrade
+was evaluated and rejected for this class. Enumeration stays at
+compilation time (function, then fact fallback) so upgrades remain regular
+`package` resources with reporting, noop and `--tags` support; the Bolt
+tasks `winget::upgrade_now` / `winget::list_upgrades` already cover
+on-demand agent-side execution without catalog changes.
+
 Enumerates upgrade rows on demand through the `winget::upgrades` function
 (one hash with `id`, `current_version` and `available_version` per
 package) and declares one `package` resource with `ensure => latest`

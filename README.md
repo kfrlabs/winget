@@ -166,6 +166,22 @@ the `winget::upgrades` function and declares one `package` with
 `ensure => latest` per `id`, so upgrades are regular
 Puppet resources (reporting, noop, `--tags`) instead of a scheduled task script.
 
+> Execution model: the function runs at catalog compilation time. Under
+> `puppet apply` it runs on the node (fully functional). Under
+> master/agent it runs on the server where winget does not exist, so the
+> class falls back to the `winget_upgrades` fact rows.
+>
+> | Setup | Behaviour |
+> | ----- | --------- |
+> | `puppet apply` | Fully functional (on-demand enumeration on the node). |
+> | master/agent with fact enabled (`WINGET_UPGRADES_ENABLED=true`) | Functional via fact fallback (warning logged). |
+> | master/agent without the fact (default) | Manages nothing (warning logged, no `package` resources). |
+>
+> Decision: Deferred/`exec`-based agent-side upgrades were evaluated and
+> rejected — compilation-time enumeration keeps upgrades as regular
+> `package` resources; use the `winget::upgrade_now` Bolt task for
+> on-demand agent-side execution.
+
 ```puppet
 include winget::upgrade
 
