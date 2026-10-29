@@ -66,6 +66,8 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
     context 'when winget is found' do
       before(:each) do
         allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return('C:/Path/to/winget.exe')
+        allow(File).to receive(:exist?).and_call_original
+        allow(File).to receive(:exist?).with('C:/Path/to/winget.exe').and_return(true)
       end
 
       it 'returns true' do
@@ -83,7 +85,7 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       end
 
       it 'logs a warning' do
-        expect(Puppet).to receive(:warning).with(/winget provider suitability check failed/)
+        expect(Puppet).to receive(:warning).with(/winget provider is unsuitable/)
         described_class.suitable?(resource)
       end
     end
@@ -94,6 +96,8 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     before(:each) do
       allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(winget_path)
+      allow(File).to receive(:exist?).and_call_original
+      allow(File).to receive(:exist?).with(winget_path).and_return(true)
     end
 
     it 'places the subcommand first and appends install flags' do
@@ -118,6 +122,32 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
       ).and_return(Puppet::Util::Execution::ProcessOutput.new('', 0))
 
       provider.winget_exec('uninstall', '--id', 'Git.Git')
+    end
+  end
+
+  describe '.winget_path' do
+    it 'reuses the cached path without re-resolving' do
+      cached = 'C:/Path/to/winget.exe'
+      allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(cached)
+      allow(File).to receive(:exist?).and_call_original
+      allow(File).to receive(:exist?).with(cached).and_return(true)
+
+      expect(described_class.winget_path).to eq(cached)
+      expect(described_class.winget_path).to eq(cached)
+      expect(PuppetX::Winget::PathResolver).to have_received(:winget_path).once
+    end
+
+    it 're-resolves when the cached path is deleted between calls' do
+      old_path = 'C:/Path/to/old-winget.exe'
+      new_path = 'C:/Path/to/winget.exe'
+      allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(old_path, new_path)
+      allow(File).to receive(:exist?).and_call_original
+      allow(File).to receive(:exist?).with(old_path).and_return(true)
+      allow(File).to receive(:exist?).with(new_path).and_return(true)
+
+      expect(described_class.winget_path).to eq(old_path)
+      allow(File).to receive(:exist?).with(old_path).and_return(false)
+      expect(described_class.winget_path).to eq(new_path)
     end
   end
 
@@ -1375,6 +1405,8 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
   describe 'first run before bootstrap (winget absent)' do
     it 'becomes suitable once winget appears: a nil path is re-resolved, not memoized' do
       allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(nil, 'C:/Path/to/winget.exe')
+      allow(File).to receive(:exist?).and_call_original
+      allow(File).to receive(:exist?).with('C:/Path/to/winget.exe').and_return(true)
       allow(Puppet).to receive(:warning)
       allow(Puppet).to receive(:debug)
       expect(described_class.suitable?).to be false
@@ -1393,6 +1425,8 @@ RSpec.describe Puppet::Type.type(:package).provider(:winget) do
 
     it 'install after bootstrap uses the fresh path (ordered Class[winget] -> Package converges in one run)' do
       allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return(nil, 'C:/Path/to/winget.exe')
+      allow(File).to receive(:exist?).and_call_original
+      allow(File).to receive(:exist?).with('C:/Path/to/winget.exe').and_return(true)
       allow(Puppet).to receive(:warning)
       allow(Puppet).to receive(:debug)
       resource = Puppet::Type.type(:package).new(name: 'Git.Git', ensure: :installed, provider: :winget)

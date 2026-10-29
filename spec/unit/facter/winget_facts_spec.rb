@@ -181,12 +181,14 @@ RSpec.describe PuppetX::Winget::Facts do
       expect(content).to include("Facter.add('winget_upgrades')")
       expect(content).to include('PuppetX::Winget::Facts.winget_upgrades')
       expect(content).to include('confine kernel: :windows')
+      expect(content).to include('PuppetX::Winget::Facts.clear_resolution_cache!')
     end
 
     it 'defines a winget_pins fact confined to windows that delegates to the helper' do
       content = File.read(File.join(lib_root, 'facter', 'winget_pins.rb'))
       expect(content).to include("Facter.add('winget_pins')")
       expect(content).to include('PuppetX::Winget::Facts.pinned_ids')
+      expect(content).to include('PuppetX::Winget::Facts.clear_resolution_cache!')
     end
   end
 
@@ -919,6 +921,76 @@ RSpec.describe PuppetX::Winget::Facts do
       expect(described_class.winget_upgrades).to eq([])
       expect(described_class.upgrade_output(nil, force: true)).not_to be_nil
       expect(described_class.upgrade_output).to be_nil
+    end
+  end
+
+  describe 'per-resolution cache invalidation' do
+    let(:winget_exe) do
+      'C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.8.2391_x64__8wekyb3d8bbwe/winget.exe'
+    end
+    let(:upgrade_output) do
+      <<~OUTPUT
+        Name              Id                      Version   Available   Source
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    2.41.0      winget
+      OUTPUT
+    end
+    let(:pin_output) do
+      <<~OUTPUT
+        Name              Id                      Version   Pin
+        --------------------------------------------------------------------
+        Git               Git.Git                 2.40.0    Pinning
+      OUTPUT
+    end
+
+    before(:each) do
+      allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return('true')
+      allow(described_class).to receive(:winget_path).and_return(winget_exe)
+      allow(File).to receive(:exist?).with(winget_exe).and_return(true)
+    end
+
+    it 're-runs winget upgrade on the next resolution' do
+      allow(PuppetX::Winget::Runner).to receive(:run).and_return(
+        Puppet::Util::Execution::ProcessOutput.new(upgrade_output, 0),
+      )
+      expect(described_class.winget_upgrades).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+      ])
+      described_class.clear_resolution_cache!
+      expect(described_class.winget_upgrades).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+      ])
+      expect(PuppetX::Winget::Runner).to have_received(:run).twice
+    end
+
+    it 're-runs winget pin list on the next resolution' do
+      allow(PuppetX::Winget::Runner).to receive(:run).and_return(
+        Puppet::Util::Execution::ProcessOutput.new(pin_output, 0),
+      )
+      expect(described_class.pinned_ids).to eq(['Git.Git'])
+      described_class.clear_resolution_cache!
+      expect(described_class.pinned_ids).to eq(['Git.Git'])
+      expect(PuppetX::Winget::Runner).to have_received(:run).twice
+    end
+
+    it 'runs winget pin list once per resolution with multiple accessors' do
+      expect(PuppetX::Winget::Runner).to receive(:run).once.and_return(
+        Puppet::Util::Execution::ProcessOutput.new(pin_output, 0),
+      )
+      expect(described_class.pinned_ids).to eq(['Git.Git'])
+      expect(described_class.pinned_ids).to eq(['Git.Git'])
+    end
+
+    it 'leaves the forced upgrade cache untouched' do
+      allow(PuppetX::Winget::Runner).to receive(:run).and_return(
+        Puppet::Util::Execution::ProcessOutput.new(upgrade_output, 0),
+      )
+      allow(ENV).to receive(:fetch).with('WINGET_UPGRADES_ENABLED', nil).and_return(nil)
+      expect(described_class.winget_upgrades(nil, force: true)).to eq([
+        { 'id' => 'Git.Git', 'current_version' => '2.40.0', 'available_version' => '2.41.0' },
+      ])
+      described_class.clear_resolution_cache!
+      expect(described_class.upgrade_output(nil, force: true)).not_to be_nil
     end
   end
 end

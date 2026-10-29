@@ -63,6 +63,8 @@ RSpec.describe PuppetX::Winget::Runner do
       provider_class.reset!
       PuppetX::Winget::PathResolver.reset!
       allow(PuppetX::Winget::PathResolver).to receive(:winget_path).and_return('/fake/winget.exe')
+      allow(File).to receive(:exist?).and_call_original
+      allow(File).to receive(:exist?).with('/fake/winget.exe').and_return(true)
       allow(described_class).to receive(:run).and_raise(described_class::TimeoutError.new('timed out after 1s: winget list'))
       expect {
         provider_class.instances_list

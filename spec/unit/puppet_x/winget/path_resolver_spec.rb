@@ -48,6 +48,10 @@ RSpec.describe PuppetX::Winget::PathResolver do
         allow(Dir).to receive(:exist?).with('C:/Program Files').and_return(true)
         allow(Dir).to receive(:exist?).with('C:/Program Files/WindowsApps').and_return(true)
         allow(Dir).to receive(:glob).and_return(winget_paths)
+        allow(File).to receive(:exist?).and_call_original
+        winget_paths.each do |p|
+          allow(File).to receive(:exist?).with(p).and_return(true)
+        end
       end
 
       it 'returns the highest version (x64)' do
@@ -60,6 +64,15 @@ RSpec.describe PuppetX::Winget::PathResolver do
         described_class.winget_path
         expect(Dir).to have_received(:glob).once
         described_class.winget_path
+      end
+
+      it 'reuses the cached path without re-scanning' do
+        cached = 'C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.2.3456.0_x64__8wekyb3d8bbwe/winget.exe'
+        allow(File).to receive(:exist?).and_call_original
+        allow(File).to receive(:exist?).with(cached).and_return(true)
+        described_class.winget_path
+        described_class.winget_path
+        expect(Dir).to have_received(:glob).once
       end
 
       context 'with arm64 highest version' do
@@ -92,6 +105,8 @@ RSpec.describe PuppetX::Winget::PathResolver do
           expect(pattern).not_to include('\\')
           ['C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.29.290.0_x64__8wekyb3d8bbwe/winget.exe']
         end
+        allow(File).to receive(:exist?).and_call_original
+        allow(File).to receive(:exist?).with('C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.29.290.0_x64__8wekyb3d8bbwe/winget.exe').and_return(true)
       end
 
       it 'normalizes the glob pattern and resolves the real exe' do
@@ -158,11 +173,38 @@ RSpec.describe PuppetX::Winget::PathResolver do
         allow(Dir).to receive(:exist?).with('C:/Program Files').and_return(true)
         allow(Dir).to receive(:exist?).with('C:/Program Files/WindowsApps').and_return(true)
         allow(Dir).to receive(:glob).and_return(paths)
+        allow(File).to receive(:exist?).and_call_original
+        paths.each do |p|
+          allow(File).to receive(:exist?).with(p).and_return(true)
+        end
 
         # 1.10.0.0 > 1.2.0.0 with Gem::Version
         expect(described_class.winget_path).to eq(
           'C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.10.0.0_x64__8wekyb3d8bbwe/winget.exe'
         )
+      end
+    end
+    context 'when the cached path is deleted between calls' do
+      let(:old_path) do
+        'C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.0.0.0_x64__8wekyb3d8bbwe/winget.exe'
+      end
+      let(:new_path) do
+        'C:/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_1.2.3456.0_x64__8wekyb3d8bbwe/winget.exe'
+      end
+
+      before(:each) do
+        allow(Dir).to receive(:exist?).and_return(true)
+        allow(Dir).to receive(:glob).and_return([old_path], [new_path])
+        allow(File).to receive(:exist?).and_call_original
+        allow(File).to receive(:exist?).with(old_path).and_return(true)
+        allow(File).to receive(:exist?).with(new_path).and_return(true)
+      end
+
+      it 're-resolves instead of returning the stale path' do
+        expect(described_class.winget_path).to eq(old_path)
+        allow(File).to receive(:exist?).with(old_path).and_return(false)
+        expect(described_class.winget_path).to eq(new_path)
+        expect(Dir).to have_received(:glob).twice
       end
     end
   end
