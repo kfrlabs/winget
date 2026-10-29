@@ -200,4 +200,23 @@ describe 'winget::source' do
     it { is_expected.to compile.with_all_deps }
     it { is_expected.to have_exec_resource_count(0) }
   end
+
+  context 'with a double quote in the title (issue #74)' do
+    let(:title) { 'con"toso' }
+
+    it { expect { catalogue }.to raise_error(Puppet::Error, %r{double quotes}) }
+  end
+
+  context 'with a double quote in the url (issue #74)' do
+    let(:params) { { url: 'https://winget.contoso.example.com/ca"che' } }
+
+    it { expect { catalogue }.to raise_error(Puppet::Error, %r{double quotes}) }
+  end
+
+  context 'with a double quote in the source_type (issue #74)' do
+    let(:params) { { url: 'https://winget.contoso.example.com/cache', source_type: 'Microsoft."Rest' } }
+
+    it { expect { catalogue }.to raise_error(Puppet::Error, %r{double quotes}) }
+  end
+
 end

@@ -60,6 +60,19 @@ class winget::sources (
     fail('The winget::sources class is only supported on Windows operating systems.')
   }
 
+  # Hardening (issue #74): expected names are interpolated into single-quoted
+  # PowerShell literals inside a double-quoted reset-guard -Command string,
+  # so a double quote would terminate the outer string and break (or alter)
+  # the reset decision — including an unintended `source reset --force`
+  # scope. (Entries keys/URLs are also validated transitively by the
+  # `winget::source` guards via `create_resources` below; this fails them
+  # fast at the entry point with the class parameter named.)
+  ($default_sources + $entries.keys).each |$source_name| {
+    if $source_name =~ /"/ {
+      fail('winget::sources: default_sources and entries keys must not contain double quotes (they terminate the PowerShell -Command string).')
+    }
+  }
+
   # Fully qualified PowerShell: exec commands must be qualified and the
   # winget alias is unavailable in the SYSTEM context.
   $powershell = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'

@@ -67,6 +67,21 @@ define winget::source (
   $powershell = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
   $winget = $facts['winget_path']
 
+  # Hardening (issue #74): interpolated values sit in single-quoted
+  # PowerShell literals inside a double-quoted -Command string, so a double
+  # quote would terminate the outer string and break (or alter) the command.
+  # Double quotes are never valid in source names, URLs or types: fail fast
+  # at compile time instead of breaking confusingly at runtime.
+  if $title =~ /"/ {
+    fail("winget::source[${title}]: title (source name) must not contain double quotes (they terminate the PowerShell -Command string).")
+  }
+  if $url and $url =~ /"/ {
+    fail("winget::source[${title}]: url must not contain double quotes (they terminate the PowerShell -Command string).")
+  }
+  if $source_type and $source_type =~ /"/ {
+    fail("winget::source[${title}]: source_type must not contain double quotes (they terminate the PowerShell -Command string).")
+  }
+
   if $winget {
     # Escape single quotes for PowerShell single-quoted literals.
     $safe_title = regsubst($title, "'", "''", 'G')

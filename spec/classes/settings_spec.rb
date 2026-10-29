@@ -75,6 +75,12 @@ describe 'winget::settings' do
         end
       end
 
+      context 'with a double quote in settings_path (issue #74)' do
+        let(:params) { { settings_path: 'C:/Configs/a"b/settings.json' } }
+
+        it { expect { catalogue }.to raise_error(Puppet::Error, %r{double quotes}) }
+      end
+
       context 'without winget (fresh bootstrap)' do
         let(:facts) { os_facts }
 

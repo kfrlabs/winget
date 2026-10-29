@@ -157,4 +157,17 @@ describe 'winget::install::local' do
       is_expected.to have_exec_resource_count(1)
     end
   end
+
+  context 'with a double quote in source_path (issue #74)' do
+    let(:params) { { source_path: 'C:/Sources/win"get.appx' } }
+
+    it { expect { catalogue }.to raise_error(Puppet::Error, %r{double quotes}) }
+  end
+
+  context 'with a double quote in dependencies (issue #74)' do
+    let(:params) { { source_path: 'C:/Sources/winget.appx', dependencies: ['C:/Sources/de"p.appx'] } }
+
+    it { expect { catalogue }.to raise_error(Puppet::Error, %r{double quotes}) }
+  end
+
 end
