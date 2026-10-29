@@ -252,14 +252,61 @@ jobs:
           '@ | Set-Content -Encoding ascii C:\Temp\probe_winget.ps1
           powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\probe_winget.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Install a package machine-scope as SYSTEM (changes, then idempotent)
-        # 7-Zip: small, stable, silent. `scope` is translated to an install
-        # flag by `winget::packages`, but a raw `package` resource has no
-        # `scope` attribute: pass `--scope machine` via `install_options`.
-        # The second apply must exit 0, which proves the provider sees the
-        # SYSTEM-wide install (a user-scope install would be invisible to
-        # `winget list` as SYSTEM and the second apply would report changes
-        # again).
+      - name: Install a package via winget::packages from Hiera as SYSTEM (changes, then idempotent)
+        # Hiera-driven path (issue #70): bootstrap plus a package in the same
+        # catalog, with the package set coming from Hiera automatic lookup
+        # (`winget::packages::entries`) instead of an inline resource. A
+        # hiera_config variant of the apply helper is staged because the
+        # shared helper takes no extra agent flags. Run 2 must be a no-op,
+        # proving single-catalog convergence of bootstrap + package.
+        shell: powershell
+        run: |
+          @'
+          version: 5
+          defaults:
+            datadir: C:\Temp\acceptance_hieradata
+            data_hash: yaml_data
+          hierarchy:
+            - name: common
+              path: common.yaml
+          '@ | Set-Content -Encoding ascii C:\Temp\acceptance_hiera.yaml
+          New-Item -ItemType Directory -Force -Path C:\Temp\acceptance_hieradata | Out-Null
+          @'
+          winget::packages::entries:
+            7zip.7zip:
+              ensure: present
+              scope: machine
+          '@ | Set-Content -Encoding ascii C:\Temp\acceptance_hieradata\common.yaml
+          @'
+          # Hiera-aware variant of apply_manifest.ps1 (same exit contract).
+          param([Parameter(Mandatory = $true)][string]$Manifest, [switch]$AllowChanges)
+          . C:\Temp\acceptance_env.ps1
+          & $PuppetBin apply --detailed-exitcodes --hiera_config 'C:\Temp\acceptance_hiera.yaml' --modulepath $ModulePath $Manifest
+          $code = $LASTEXITCODE
+          if ($AllowChanges) {
+            if ($code -eq 0 -or $code -eq 2) { exit 0 } else { exit $code }
+          }
+          if ($code -eq 0) { exit 0 } else { Write-Error "Expected idempotent apply (exit 0), got $code."; exit $code }
+          '@ | Set-Content -Encoding ascii C:\Temp\apply_hiera_manifest.ps1
+          @'
+          class { 'winget':
+            ensure => present,
+          }
+          include winget::packages
+          Class['winget'] -> Class['winget::packages']
+          '@ | Set-Content -Encoding ascii C:\Temp\winget_packages_hiera.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_hiera_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_packages_hiera.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_hiera_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_packages_hiera.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Raw package resource converges against the class install as SYSTEM (idempotent)
+        # 7-Zip was installed machine-scope by `winget::packages` above: a raw
+        # `package` resource with `install_options` must see the same
+        # SYSTEM-wide install and converge with no changes on both runs (a
+        # user-scope install would be invisible to `winget list` as SYSTEM).
+        # `scope` is translated to an install flag by `winget::packages`, but
+        # a raw `package` resource has no `scope` attribute: pass
+        # `--scope machine` via `install_options`.
         shell: powershell
         run: |
           @"
@@ -413,8 +460,41 @@ jobs:
           if $facts['winget_path'] == undef { fail('winget_path fact is undef') }
           if $facts['winget_version'] !~ /^\d+\.\d+/ { fail('winget_version fact has an unexpected shape') }
           if !($facts['winget_pins'] =~ Array) { fail('winget_pins fact is not an array') }
+          if !($facts['winget_upgrades'] =~ Array) { fail('winget_upgrades fact is not an array') }
           '@ | Set-Content -Encoding ascii C:\Temp\winget_facts.pp
           powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_facts.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: winget::settings live as SYSTEM (changes, then idempotent)
+        # The settings class manages the SYSTEM-profile settings.json used by
+        # the agent: disable telemetry and prefer machine scope, assert the
+        # JSON content, then require a no-op second apply (the file resource
+        # must hold without rewriting).
+        shell: powershell
+        run: |
+          @'
+          class { 'winget':
+            ensure => present,
+          }
+          class { 'winget::settings':
+            config => {
+              'telemetry'       => { 'disable' => true },
+              'installBehavior' => { 'preferences' => { 'scope' => 'machine' } },
+            },
+          }
+          Class['winget'] -> Class['winget::settings']
+          '@ | Set-Content -Encoding ascii C:\Temp\winget_settings.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_settings.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_settings.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          $path = 'C:\Windows\System32\config\systemprofile\AppData\Local\Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState\settings.json'
+          if (-not (Test-Path -LiteralPath $path)) { Write-Error "settings.json missing at $path."; exit 1 }
+          $json = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
+          if ($json.telemetry.disable -ne $true) { Write-Error 'telemetry.disable is not true in settings.json.'; exit 1 }
+          if ($json.installBehavior.preferences.scope -ne 'machine') { Write-Error 'install scope preference is not machine in settings.json.'; exit 1 }
+          '@ | Set-Content -Encoding ascii C:\Temp\assert_settings.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\assert_settings.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Task smoke test (list_upgrades) as SYSTEM
         shell: powershell
@@ -446,6 +526,107 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_upgrade.pp'"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: winget::upgrade class live as SYSTEM (changes allowed, then idempotent)
+        # Bulk-upgrade class end to end (issue #70): the `winget::upgrades`
+        # function enumerates live on the node under `puppet apply`.
+        # Deliberately no machine `WINGET_UPGRADES_ENABLED` override here:
+        # the opt-in fact is only a fallback for server-side compilation
+        # (under apply the live function always wins when winget runs), so
+        # enabling it would prove nothing about the fact path — that path
+        # stays covered by unit specs plus the fact-shape assertion above.
+        # Scoped to 7-Zip (just installed at latest, so the likely outcome
+        # is an empty upgrade set with a notice and no resources) to avoid
+        # upgrading every outdated package on the image.
+        shell: powershell
+        run: |
+          @'
+          class { 'winget':
+            ensure => present,
+          }
+          class { 'winget::upgrade':
+            only => ['7zip.7zip'],
+          }
+          Class['winget'] -> Class['winget::upgrade']
+          '@ | Set-Content -Encoding ascii C:\Temp\winget_upgrade_class.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_upgrade_class.pp' -AllowChanges"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_upgrade_class.pp'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Task smoke test (upgrade_now) as SYSTEM
+        # Explicit single ID (7-Zip, already at latest): the task must exit 0
+        # with JSON reporting the ID as already-current (or upgraded, if an
+        # upgrade appeared) and an empty `failed` list — never a mass upgrade.
+        shell: powershell
+        run: |
+          @'
+          . C:\Temp\acceptance_env.ps1
+          $task = Join-Path $ModulePath 'winget\tasks\upgrade_now.ps1'
+          $out = '{"ids": ["7zip.7zip"]}' | & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $task
+          if ($LASTEXITCODE -ne 0) { Write-Error "upgrade_now task failed with exit ${LASTEXITCODE}: $out"; exit $LASTEXITCODE }
+          try { $parsed = $out | ConvertFrom-Json -ErrorAction Stop } catch { Write-Error "upgrade_now output is not JSON: $out"; exit 1 }
+          if ($null -ne $parsed._error) { Write-Error "upgrade_now reported an error: $out"; exit 1 }
+          if (@($parsed.failed).Count -ne 0) { Write-Error "upgrade_now reported failures: $out"; exit 1 }
+          $seen = @($parsed.already_current) + @($parsed.upgraded)
+          if (-not ($seen -contains '7zip.7zip')) { Write-Error "upgrade_now did not account for 7zip.7zip: $out"; exit 1 }
+          '@ | Set-Content -Encoding ascii C:\Temp\task_upgrade_now_smoke.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\task_upgrade_now_smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: winget::configure live as SYSTEM (converge or fail closed on the known platform block)
+        # Minimal Desired State Configuration file (a marker file via the
+        # PSDsc File resource, nothing installed). Contract, mirroring the
+        # `ensure => absent` step below: converge where the image allows it
+        # (run 1 applies, run 2 is a no-op proving the `winget configure
+        # test` guard, marker content asserted), otherwise fail closed on
+        # the known platform block — `winget configure` cannot initialize
+        # its configuration system as SYSTEM in session 0 on this image
+        # (`0x80004002`), so the exec fails with that error instead of
+        # silently skipping. Bounded to 600 s (class default is 1800 s).
+        shell: powershell
+        run: |
+          @'
+          properties:
+            configurationVersion: 0.2.0
+            resources:
+              - resource: PSDsc/File
+                id: acceptanceMarker
+                directives:
+                  description: Acceptance marker file (issue #70)
+                settings:
+                  DestinationPath: C:\Temp\winget_configure_marker.txt
+                  Ensure: Present
+                  Contents: acceptance
+          '@ | Set-Content -Encoding ascii C:\Temp\acceptance_config.winget
+          @'
+          class { 'winget':
+            ensure => present,
+          }
+          winget::configure { 'C:/Temp/acceptance_config.winget':
+            timeout => 600,
+          }
+          Class['winget'] -> Winget::Configure['C:/Temp/acceptance_config.winget']
+          '@ | Set-Content -Encoding ascii C:\Temp\winget_configure.pp
+          powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_configure.pp' -AllowChanges"
+          $code = $LASTEXITCODE
+          if ($code -eq 0 -or $code -eq 2) {
+          @'
+          $marker = 'C:\Temp\winget_configure_marker.txt'
+          if (-not (Test-Path -LiteralPath $marker)) { Write-Error "configure marker missing at $marker."; exit 1 }
+          if ((Get-Content -Raw -LiteralPath $marker).Trim() -ne 'acceptance') { Write-Error 'configure marker has unexpected content.'; exit 1 }
+          '@ | Set-Content -Encoding ascii C:\Temp\assert_configure.ps1
+            powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\apply_manifest.ps1 -ScriptArgs "-Manifest 'C:\Temp\winget_configure.pp'"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\Invoke-AsSystem.ps1 -ScriptPath C:\Temp\assert_configure.ps1
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host 'Live configure converged: marker present, second apply a no-op.'
+            exit 0
+          }
+          $out = Get-Content C:\Temp\as_system_task.log -Raw -ErrorAction SilentlyContinue
+          if ($null -ne $out -and $out -match '0x80004002') {
+            Write-Host 'winget configure cannot initialize its configuration system as SYSTEM on this image (0x80004002): the class failed closed as specified — documented platform limitation, not a silent skip.'
+            exit 0
+          }
+          Write-Error "Configure apply failed unexpectedly (exit $code) without the known platform block."
+          exit $code
       - name: Remove the package as SYSTEM (must converge, then hold)
         shell: powershell
         run: |

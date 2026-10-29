@@ -1235,9 +1235,13 @@ show there:
 3. Proves the fully qualified `winget.exe` executes as SYSTEM
    (`--version`); some images cannot (STATUS_DLL_NOT_FOUND) and the job
    fails fast with a clear message instead of cascading.
-4. Installs `7zip.7zip` machine-scope as SYSTEM (changes, then idempotent —
-   a user-scope install would be invisible to `winget list` as SYSTEM and the
-   second apply would not be a no-op).
+4. Installs `7zip.7zip` machine-scope as SYSTEM via `winget::packages`
+   from Hiera (`winget::packages::entries` through `--hiera_config`,
+   bootstrap plus package in the same catalog — changes, then idempotent),
+   then proves a raw `package` resource with `install_options`
+   (`--scope machine`) converges against that class-managed install with no
+   changes on both runs (a user-scope install would be invisible to
+   `winget list` as SYSTEM).
 5. `winget::pin` add, no-op apply, drift to `blocking => true` (must converge
    in one run, second apply a no-op, `pin list` shows `Blocking`), then
    remove.
@@ -1247,22 +1251,46 @@ show there:
    (a throwaway probe name is unusable: `source add` refuses a URL already
    registered under another name, and the only reachable valid endpoints
    are the default sources).
-7. Asserts the `winget_path` / `winget_version` / `winget_pins` facts have the
-   expected shapes as SYSTEM.
-8. Runs the `winget::list_upgrades` task script as SYSTEM and requires exit 0
+7. Asserts the `winget_path` / `winget_version` / `winget_pins` /
+   `winget_upgrades` facts have the expected shapes as SYSTEM (the upgrades
+   fact is `[]` by default: the opt-in is off unless `WINGET_UPGRADES_ENABLED`
+   is set).
+8. Manages `winget::settings` as SYSTEM (telemetry off, machine scope),
+   asserts the `settings.json` content, then requires a no-op second apply.
+9. Runs the `winget::list_upgrades` task script as SYSTEM and requires exit 0
    plus JSON output with an `upgrades` key.
-9. `ensure => latest` on the package (changes, then idempotent), then
-   `ensure => absent` for the package (converges, then holds; `winget list`
-   must no longer show the ID), and finally `class { 'winget': ensure =>
-   absent }` (contract: converge where the image allows removal, otherwise
-   fail closed with the platform error — a provisioned bundle whose
-   registered instance refuses DeStage, `0x80070032`, is accepted as the
-   documented fail-closed outcome, never as a silent skip; runs last
-   because nothing after it needs winget).
-10. Every state-changing step is followed by an end-state assertion, so a
+10. `ensure => latest` on the package (changes, then idempotent).
+11. `winget::upgrade` with `only => ['7zip.7zip']` as SYSTEM (live function
+    enumeration on the node; the opt-in fact is deliberately not enabled —
+    it only serves server-side compilation, so enabling it under apply
+    would prove nothing), scoped to one ID so the job never mass-upgrades
+    the image, changes allowed then idempotent, then the
+    `winget::upgrade_now` task with an explicit single ID (must exit 0
+    with empty `failed` and the ID accounted for).
+12. Applies a minimal `winget::configure` file (a marker file via the PSDsc
+    File resource) as SYSTEM: converge where the image allows it (run 1
+    applies, run 2 is a no-op proving the `winget configure test` guard,
+    marker content asserted), otherwise fail closed on the known platform
+    block — `winget configure` cannot initialize its configuration system
+    as SYSTEM in session 0 (`0x80004002`), so the class must surface that
+    error instead of silently skipping.
+13. `ensure => absent` for the package (converges, then holds; `winget list`
+    must no longer show the ID), and finally `class { 'winget': ensure =>
+    absent }` (contract: converge where the image allows removal, otherwise
+    fail closed with the platform error — a provisioned bundle whose
+    registered instance refuses DeStage, `0x80070032`, is accepted as the
+    documented fail-closed outcome, never as a silent skip; runs last
+    because nothing after it needs winget).
+14. Every state-changing step is followed by an end-state assertion, so a
     guard regression (e.g. the `Select-String` exit-code bug, where the guard
     always succeeds and the exec never runs) fails the job instead of
     silently skipping.
+
+Coverage limits (issue #70): the job runs en-US on `windows-latest`
+(Server). Windows 10/11 client SKUs are supported but not covered live, and
+no non-English locale is exercised live (a locale switch needs a reboot,
+which GitHub-hosted jobs do not survive; the parsers are validated against
+the simulated EN/FR/DE/ES/IT/PT table fixtures in `spec/fixtures`).
 
 A nightly `schedule` run repeats the same matrix to absorb network flakiness.
 
