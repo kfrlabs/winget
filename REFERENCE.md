@@ -38,10 +38,12 @@ map to `package` resource attributes; `source`, `scope`, `architecture`,
 property (`winget pin add` / `winget pin remove`); `allow_downgrade`
 opts a pinned version in to the destructive uninstall-then-install
 downgrade (provider strips the marker before calling winget).
+* [`Winget::PackageEnsure`](#Winget--PackageEnsure): Permitted short-form `ensure` values for winget packages.
 * [`Winget::PackagesHash`](#Winget--PackagesHash): Hash of winget packages for `winget::packages`.
 Keys are winget package IDs. Values are either a shorthand ensure string
-(`'installed'`, `'latest'`, `'2.40.0'`, `'absent'`, ...) or a full
-`Winget::Package` hash. Designed for Hiera (`winget::packages`, or
+(a `Winget::PackageEnsure`: `'present'`, `'installed'`, `'absent'`,
+`'purged'`, `'latest'` or a version string — typos such as `'presnt'`
+fail compilation, issue #71) or a full `Winget::Package` hash. Designed for Hiera (`winget::packages`, or
 `winget::packages::entries` when declaring the sub-class directly):
 
 ```yaml
@@ -1531,7 +1533,7 @@ Alias of
 
 ```puppet
 Struct[{
-  Optional['ensure']            => Variant[Enum['present', 'installed', 'absent', 'purged', 'latest'], Pattern[/\A\d[\w.+-]*\z/]],
+  Optional['ensure']            => Winget::PackageEnsure,
   Optional['source']            => String[1],
   Optional['scope']             => Enum['user', 'machine'],
   Optional['architecture']      => Enum['x86', 'x64', 'arm', 'arm64'],
@@ -1547,12 +1549,23 @@ Struct[{
 }]
 ```
 
+### <a name="Winget--PackageEnsure"></a>`Winget::PackageEnsure`
+
+`present`, `installed`, `absent`, `purged`, `latest` or a version string
+(plain numeric like `2.40.0`, or suffixed like `2.40.0.windows.1`).
+Anything else — including typos such as `presnt` — fails compilation
+(issue #71). Shared by the shorthand string and the `ensure` key of
+`Winget::Package` so both forms reject the same typos.
+
+Alias of `Variant[Enum['present', 'installed', 'absent', 'purged', 'latest'], Pattern[/\A\d[\w.+-]*\z/]]`
+
 ### <a name="Winget--PackagesHash"></a>`Winget::PackagesHash`
 
 Hash of winget packages for `winget::packages`.
 Keys are winget package IDs. Values are either a shorthand ensure string
-(`'installed'`, `'latest'`, `'2.40.0'`, `'absent'`, ...) or a full
-`Winget::Package` hash. Designed for Hiera (`winget::packages`, or
+(a `Winget::PackageEnsure`: `'present'`, `'installed'`, `'absent'`,
+`'purged'`, `'latest'` or a version string — typos such as `'presnt'`
+fail compilation, issue #71) or a full `Winget::Package` hash. Designed for Hiera (`winget::packages`, or
 `winget::packages::entries` when declaring the sub-class directly):
 
 ```yaml
@@ -1568,7 +1581,7 @@ Named `PackagesHash` (rather than `Packages`) because Puppet folds
 definition names case-insensitively: `Winget::Packages` would collide
 with the `winget::packages` class.
 
-Alias of `Hash[String[1], Variant[String[1], Winget::Package]]`
+Alias of `Hash[String[1], Variant[Winget::PackageEnsure, Winget::Package]]`
 
 ### <a name="Winget--SourceEntry"></a>`Winget::SourceEntry`
 

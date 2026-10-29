@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Short-form `ensure` typos fail at compile time (issue #71): new shared
+  `Winget::PackageEnsure` alias used by both the shorthand string and the
+  `ensure` key of `Winget::Package`, so `'presnt'` is rejected with a
+  readable type error instead of being treated as a version and failing at
+  runtime. `latest`/`installed`/`purged`/suffixed versions still accepted.
+
 ### Added
 - Live acceptance scenarios (issue #70): `winget::packages` from Hiera
   (bootstrap + package in one catalog), raw `package` convergence against

@@ -28,7 +28,37 @@ describe 'winget::packages' do
       context "with a typo'd ensure (issue #45)" do
         let(:params) { { entries: { 'Git.Git' => { 'ensure' => 'presnt' } } } }
 
-        it { expect { catalogue }.to raise_error(Puppet::Error, %r{presnt}) }
+        # The alias-expanded message names the entry and Winget::PackageEnsure
+        # rather than echoing the value.
+        it { expect { catalogue }.to raise_error(Puppet::Error, %r{entry 'Git\.Git'.*PackageEnsure}) }
+      end
+
+      context "with a typo'd short-form ensure (issue #71)" do
+        let(:params) { { entries: { 'Git.Git' => 'presnt' } } }
+
+        it { expect { catalogue }.to raise_error(Puppet::Error, %r{entry 'Git\.Git'.*PackageEnsure}) }
+      end
+
+      # 'purged' is type-accepted (mirroring the hash form) but the winget
+      # provider has no purgeable feature, so it cannot compile into a
+      # catalog — pre-existing provider limitation, not covered here.
+      {
+        'present' => 'present',
+        'absent' => 'absent',
+        'latest' => 'latest',
+        'installed' => 'installed',
+        '2.40.0' => '2.40.0',
+        '2.40.0.windows.1' => '2.40.0.windows.1',
+      }.each_key do |value|
+        context "with short-form ensure #{value.inspect} (issue #71)" do
+          let(:params) { { entries: { 'Git.Git' => value } } }
+
+          it { is_expected.to compile.with_all_deps }
+
+          it 'declares the package with that ensure' do
+            is_expected.to contain_package('Git.Git').with_ensure(value)
+          end
+        end
       end
 
       context 'with structured install parameters' do
