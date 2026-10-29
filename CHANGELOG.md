@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Live acceptance scenarios (issue #70): `winget::packages` from Hiera
+  (bootstrap + package in one catalog), raw `package` convergence against
+  the class install, `winget::settings` content assertion,
+  `winget_upgrades` fact shape assertion, `winget::upgrade` class live,
+  `winget::upgrade_now` task smoke test, and minimal
+  `winget::configure` convergence (or fail-closed on the known `0x80004002`
+  platform block, mirroring the `ensure => absent` contract) — every
+  scenario with a second-run idempotence assertion. README documents the
+  remaining coverage limits (en-US Server runners only: client SKUs and
+  non-English locales untested live, reboot required).
+
 ### Fixed
 - `winget::upgrade` master/agent discoverability (issue #67): prominent
   execution-model / compatibility table (`puppet apply`, master/agent with
