@@ -57,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (rejected: keeps upgrades as regular `package` resources; Bolt tasks
   cover on-demand agent-side execution).
 
+### Fixed
+- Quality gates enforced (issue #80), no behavior change: rspec-puppet
+  resource coverage floor set to the measured 70% (41 resources, 29
+  touched, 70.73%), and RuboCop lint target raised to Ruby 3.1 with the
+  four redundant `freeze` calls on regex literals removed.
+
 ## [1.1.0] - 2026-10-19
 
 ### Added

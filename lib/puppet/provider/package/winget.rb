@@ -53,11 +53,11 @@ unless defined?(::PuppetX::Winget::Provider::EXIT_SUCCESS)
         # found. No newer package versions are available..." instead of
         # EXIT_UPDATE_NOT_APPLICABLE (0x8A15002B), so idempotence must also
         # match on text (see handle_exit_code).
-        NO_UPGRADE_AVAILABLE_PATTERN = %r{No available upgrade|No newer package|No applicable update}i.freeze
+        NO_UPGRADE_AVAILABLE_PATTERN = %r{No available upgrade|No newer package|No applicable update}i
         # Text markers for "package not installed" upgrade output, used to
         # fall back to install when older winget builds return exit code 1
         # instead of EXIT_NO_APPLICATIONS_FOUND (0x8A150014).
-        NO_INSTALLED_PACKAGE_PATTERN = %r{No packages? found|not installed|No manifest found}i.freeze
+        NO_INSTALLED_PACKAGE_PATTERN = %r{No packages? found|not installed|No manifest found}i
 
         # Non-interactive flags per subcommand, verified against
         # https://learn.microsoft.com/en-us/windows/package-manager/winget/.
