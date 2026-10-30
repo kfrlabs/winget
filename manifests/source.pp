@@ -46,10 +46,25 @@
 #   on an existing source removes and re-adds the source so the catalog
 #   converges in one run.
 # @param header
-#   Optional REST source HTTP header (`--header`). `Sensitive` so the value
-#   never lands in logs or reports. The header is write-only: it cannot be
-#   read back, so changing only the header is not detected — remove the
-#   source (`ensure => absent`) and re-add it to rotate the header.
+#   Optional REST source HTTP header (`--header`). Must be `Sensitive`
+#   (a plain string fails compilation): supply it from Hiera via hiera-eyaml
+#   (encrypted value looked up as `Sensitive` with a `convert_to: Sensitive`
+#   lookup option) — a raw YAML string cannot produce a `Sensitive` value,
+#   and a `Deferred`-wrapped value is not supported (the header is unwrapped
+#   while the catalog compiles, so a `Deferred` value fails compilation).
+#   `Sensitive` keeps the value out of Puppet logs, reports and stored
+#   catalogs, and out of the PowerShell `-Command` text: the command carries
+#   only the literal `$env:WINGET_SOURCE_HEADER` (single-quoted Puppet
+#   string, no interpolation), resolved by PowerShell at runtime from the
+#   exec environment. PowerShell then expands it, so `winget.exe` still
+#   receives the secret as a `--header` argument: it is visible in the
+#   `winget.exe` process command line for the duration of the call (to local
+#   administrators and process-auditing tools). `winget source add` offers
+#   no file or secret-store alternative to `--header`, so this exposure is
+#   inherent — scope the header accordingly (least privilege, short lifetime,
+#   rotatable). The header is write-only: it cannot be read back, so changing
+#   only the header is not detected — remove the source (`ensure => absent`)
+#   and re-add it to rotate it.
 # @param accept_source_agreements
 #   Whether to pass `--accept-source-agreements` when adding the source.
 #   Default: true (required for non-interactive agent runs).
@@ -158,12 +173,16 @@ define winget::source (
         timeout => 300,
       }
 
-      # The header value never appears on the command line (visible in
-      # debug logs, process listings and failure reports): it is passed to
-      # the child process via an environment variable instead. `$env:...`
+      # The header value never appears in the PowerShell `-Command` text
+      # (and so not in Puppet debug logs or failure reports): it is passed
+      # to the child process via an environment variable instead. `$env:...`
       # is written in a single-quoted Puppet string (no interpolation) so
       # it reaches PowerShell untouched and is resolved there, at runtime.
-      # The environment is wrapped back into `Sensitive`: a plain array
+      # Residual exposure (issue #69): PowerShell expands the variable, so
+      # `winget.exe` receives the secret as a `--header` argument, visible
+      # in its process command line for the duration of the call — `winget
+      # source add` offers no file or secret-store alternative. The
+      # environment is wrapped back into `Sensitive`: a plain array
       # holding the unwrapped value would be stored in clear text in the
       # catalog (and in PuppetDB), whereas a Sensitive resource parameter is
       # redacted from reports, logs and stored catalogs.

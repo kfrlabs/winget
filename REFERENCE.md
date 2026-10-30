@@ -1437,10 +1437,25 @@ Default value: `false`
 
 Data type: `Optional[Sensitive[String[1]]]`
 
-Optional REST source HTTP header (`--header`). `Sensitive` so the value
-never lands in logs or reports. The header is write-only: it cannot be
-read back, so changing only the header is not detected — remove the
-source (`ensure => absent`) and re-add it to rotate the header.
+Optional REST source HTTP header (`--header`). Must be `Sensitive`
+(a plain string fails compilation): supply it from Hiera via hiera-eyaml
+(encrypted value looked up as `Sensitive` with a `convert_to: Sensitive`
+lookup option) — a raw YAML string cannot produce a `Sensitive` value,
+and a `Deferred`-wrapped value is not supported (the header is unwrapped
+while the catalog compiles, so a `Deferred` value fails compilation).
+`Sensitive` keeps the value out of Puppet logs, reports and stored
+catalogs, and out of the PowerShell `-Command` text: the command carries
+only the literal `$env:WINGET_SOURCE_HEADER` (single-quoted Puppet
+string, no interpolation), resolved by PowerShell at runtime from the
+exec environment. PowerShell then expands it, so `winget.exe` still
+receives the secret as a `--header` argument: it is visible in the
+`winget.exe` process command line for the duration of the call (to local
+administrators and process-auditing tools). `winget source add` offers
+no file or secret-store alternative to `--header`, so this exposure is
+inherent — scope the header accordingly (least privilege, short lifetime,
+rotatable). The header is write-only: it cannot be read back, so changing
+only the header is not detected — remove the source (`ensure => absent`)
+and re-add it to rotate it.
 
 Default value: `undef`
 
