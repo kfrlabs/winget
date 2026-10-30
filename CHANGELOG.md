@@ -104,48 +104,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (suffixed because Puppet folds definition names case-insensitively:
   unsuffixed names would collide with the classes/define)
 - Community files: `SECURITY.md`, `CODEOWNERS`, `CODE_OF_CONDUCT.md`
-- Provider `install_options` source detection now also handles the
-  separate-element pair form (`['--source', 'msstore']`, as produced by
-  the structured `source` key) without duplicating the flag
-- Provider `self.prefetch(resources)` with a class-level `winget list`
-  cache: N `package` resources now share a single listing instead of one
-  listing per resource (use `clear_list_cache!` / `reset!` to invalidate)
 - New `winget::upgrades` function (issue #33): on-demand structured upgrade
   inventory (same `id` + `current_version`/`available_version` rows as the
   fact) for `Class['winget::upgrade']`. Enumeration now happens only when
   the class is declared; the fact rows are only a fallback for server-side
   compilation (where the function runs without winget)
-- `ensure => absent` for the `cdn` / `github` / `local` installs now also
-  removes the staged provisioned package (`Remove-AppxProvisionedPackage`):
-  `Remove-AppxPackage -AllUsers` alone fails with `0x80070032` on staged
-  images (seen on the CI runner), and provisioned installs from our own
-  bootstrap fallback were never removed. Each step is best effort; the exec
-  fails closed only when an instance still resolves. Note: removal can be
-  blocked by Windows itself (`0x80070032`, e.g. a provisioned bundle whose
-  registered instance refuses DeStage on stock images): the run then fails
-  closed instead of silently keeping winget
-- `winget_upgrades` fact is now opt-in inventory (issue #33): it returns
-  `[]` without shelling out unless `WINGET_UPGRADES_ENABLED` is set to a
-  true-like value (`true`, `1`, `yes`, `on`). Nodes without
-  `Class['winget::upgrade']` no longer pay for a `winget upgrade` source
-  round-trip on every agent run; enable the fact for PuppetDB inventory
-  (or for server-side compilation of `winget::upgrade`)
 - `winget::upgrade` documents the consent decision (issue #33):
   `--accept-source-agreements` is kept deliberately for enumeration, the
   provider and the Bolt tasks, so winget can never prompt (or stall where
   nothing answers) on nodes that never opted in
-- Bootstrap `source => 'cdn'`: preferred name for the Microsoft CDN download
-  of App Installer (`https://aka.ms/getwinget`); `source => 'msstore'` is kept
-  as a deprecated alias with the same behavior and logs a deprecation warning
-- Defined type `winget::install::cdn` (issue #47): the real implementation of
-  the Microsoft CDN bootstrap, backing `source => 'cdn'`;
-  `winget::install::msstore` is now a thin deprecated wrapper (logs a
-  warning, forwards all parameters including `fail_on_error`) so existing
-  manifests keep compiling. Resource titles changed (`winget_install_cdn_*`,
-  `winget_uninstall_cdn_*`): exec titles show up in reports
-- Simplified `hiera.yaml` (issue #47): single `common` level. The per-OS
-  levels pointed at files that do not exist (`data/` only ships
-  `common.yaml`) and only added failed lookups
 - Bootstrap download hardening (issue #39): the App Installer bundle is
   downloaded into a per-run unique directory (no fixed name in the shared
   `$env:TEMP`, safe under retries) restricted to SYSTEM and Administrators,
@@ -158,18 +125,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `winget_version` fact predates `configure test` (needs winget >= 1.6)
   instead of re-applying silently; new `timeout` parameter (default 1800 s);
   trust model and prerequisites documented in the README
-- Convergent pins and sources (issue #38): changing `blocking` or `version`
-  of a `winget::pin`, or `url`, `source_type`, `trust_level` or `explicit`
-  of a `winget::source`, now removes and re-adds the object in the same run
-  (explicit ordering, guards re-evaluated after removal) instead of silently
-  doing nothing; unreadable attributes keep presence-only behaviour (pin
-  `source`, source `header`, and fields missing from older winget exports)
-- Stricter `ensure` typing (issue #45): `class winget` and the `cdn` /
-  `github` / `local` install defines accept only `present`, `absent` or a
-  dotted version (typos such as `presnt` fail compilation instead of behaving
-  like `present`); `Winget::Package['ensure']` accepts only the package
-  provider values or a version starting with a digit; setting the deprecated
-  `version` parameter logs a deprecation warning
 - Release pipeline hardening (issue #42): the CHANGELOG entry is validated
   before the `pdk build` and the Forge publish (a missing entry used to fail
   the job after an irreversible upload); tagged commit must be reachable from
@@ -184,10 +139,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   add/no-op/drift/remove, fact shapes, the `list_upgrades` task, upgrade and
   removals, with end-state assertions after each apply; plus a nightly
   scheduled run
+
+### Changed
+- `winget_upgrades` fact is now opt-in inventory (issue #33): it returns
+  `[]` without shelling out unless `WINGET_UPGRADES_ENABLED` is set to a
+  true-like value (`true`, `1`, `yes`, `on`). Nodes without
+  `Class['winget::upgrade']` no longer pay for a `winget upgrade` source
+  round-trip on every agent run; enable the fact for PuppetDB inventory
+  (or for server-side compilation of `winget::upgrade`). **Breaking:**
+  consumers reading the fact from PuppetDB/inventory now get `[]` by
+  default. Migration: set `WINGET_UPGRADES_ENABLED=true` on nodes whose
+  upgrade inventory is consumed (or that compile `winget::upgrade`
+  server-side)
+- Bootstrap `source => 'cdn'`: preferred name for the Microsoft CDN download
+  of App Installer (`https://aka.ms/getwinget`); `source => 'msstore'` is kept
+  as a deprecated alias with the same behavior and logs a deprecation warning.
+  **Breaking:** the canonical source name changed. Migration: declare
+  `source => 'cdn'`; the `msstore` alias still compiles but plan its removal
+- Defined type `winget::install::cdn` (issue #47): the real implementation of
+  the Microsoft CDN bootstrap, backing `source => 'cdn'`;
+  `winget::install::msstore` is now a thin deprecated wrapper (logs a
+  warning, forwards all parameters including `fail_on_error`) so existing
+  manifests keep compiling. Resource titles changed (`winget_install_cdn_*`,
+  `winget_uninstall_cdn_*`): exec titles show up in reports. **Breaking:**
+  code referencing the old exec resource titles (reports, collectors,
+  `before`/`require`/`subscribe`) must use the new titles. Migration:
+  update title references to `winget_install_cdn_*` /
+  `winget_uninstall_cdn_*` and stop declaring `winget::install::msstore`
+  directly
+- Simplified `hiera.yaml` (issue #47): single `common` level. The per-OS
+  levels pointed at files that do not exist (`data/` only ships
+  `common.yaml`) and only added failed lookups. **Breaking:** per-OS hiera
+  files/levels are no longer consulted. Migration: move any per-OS keys
+  into `common.yaml` (or a caller-side hierarchy)
+- Convergent pins and sources (issue #38): changing `blocking` or `version`
+  of a `winget::pin`, or `url`, `source_type`, `trust_level` or `explicit`
+  of a `winget::source`, now removes and re-adds the object in the same run
+  (explicit ordering, guards re-evaluated after removal) instead of silently
+  doing nothing; unreadable attributes keep presence-only behaviour (pin
+  `source`, source `header`, and fields missing from older winget exports)
+- Stricter `ensure` typing (issue #45): `class winget` and the `cdn` /
+  `github` / `local` install defines accept only `present`, `absent` or a
+  dotted version (typos such as `presnt` fail compilation instead of behaving
+  like `present`); `Winget::Package['ensure']` accepts only the package
+  provider values or a version starting with a digit; setting the deprecated
+  `version` parameter logs a deprecation warning. **Breaking:** manifests
+  relying on loose values (`latest`, `installed`, arbitrary strings,
+  `version` parameter) no longer compile. Migration: use
+  `present`/`absent`/dotted versions, drop the `version` parameter, and map
+  `latest`/`installed` to explicit versions or `present`
+- `source => 'auto'`: a failed `cdn` attempt (exit code 1 accepted via the
+  new `fail_on_error => false` parameter of `winget::install::msstore`) no
+  longer marks `Class['winget']` as failed, which used to skip every
+  dependent resource even when the `github` fallback succeeded
+- `source => 'auto'` fallback: the `github` fallback is no longer chained
+  after `msstore` with `->`, so it still runs when the `msstore` install
+  fails (previously it never ran: skipped on failure, no-op on success)
+- `auto` with a pinned version (`ensure => '1.8.2391'`) now installs from
+  `github` directly, since the `msstore` CDN always serves latest and cannot
+  honor a pin; `msstore` with a pin logs a warning explaining this
+- Class `winget` with `ensure => absent` no longer uses the package provider
+  (issue #35): it declares `winget::install::msstore { 'winget': ensure =>
+  'absent' }`, so the documented `Class['winget'] -> Package <| provider ==
+  winget |>` collector cannot cycle, and no `Package[...]` remains in the
+  catalog. **Breaking:** the catalog shape changed for `ensure => absent`
+  (install define instead of a `Package` resource). Migration: update
+  collectors, relationships and tests that expect `Package['winget']` when
+  absent
 - Windows Server support clarified (issue #46): 2019 is best effort /
   untested (dropped from `metadata.json` and the class warning list, which
   now covers 10, 11, 2022, 2025); Microsoft only documents winget for
-  Windows 10, Windows 11 and Windows Server 2025
+  Windows 10, Windows 11 and Windows Server 2025. **Breaking:** 2019 is no
+  longer a claimed supported OS. Migration: treat 2019 as best effort only;
+  use 10, 11, 2022 or 2025 for supported deployments
 
 ### Fixed
 - Bootstrap ordering: `winget::packages`, `winget::sources` and
@@ -195,10 +219,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `require` `Class['winget']`, so packages no longer run before winget is
   installed; they are deliberately not contained, which would create a
   dependency cycle with `Class['winget'] -> Package <| provider == winget |>`
-- `source => 'auto'`: a failed `cdn` attempt (exit code 1 accepted via the
-  new `fail_on_error => false` parameter of `winget::install::msstore`) no
-  longer marks `Class['winget']` as failed, which used to skip every
-  dependent resource even when the `github` fallback succeeded
 - CI `gate` job always runs and fails when a required job failed, was
   cancelled or was skipped (a skipped required check counted as passing)
 - `suitable?` warning throttle: the unsuitable/missing-winget warning is
@@ -216,12 +236,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `winget list` / `upgrade` / `pin list` parsing ignores the progress
   spinner frames winget redraws with carriage returns, which shifted the
   column offsets of the header line
-- `source => 'auto'` fallback: the `github` fallback is no longer chained
-  after `msstore` with `->`, so it still runs when the `msstore` install
-  fails (previously it never ran: skipped on failure, no-op on success)
-- `auto` with a pinned version (`ensure => '1.8.2391'`) now installs from
-  `github` directly, since the `msstore` CDN always serves latest and cannot
-  honor a pin; `msstore` with a pin logs a warning explaining this
 - `source_path` precedence: when set, only the local bundle is installed and
   no `msstore`/`github` download is attempted (previously both ran and raced)
 - Version pinning is now idempotent for the `github` and `local` sources via
@@ -280,11 +294,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plain-numeric installed version triggers uninstall-then-install; anything
   else (`2.40.0.windows.1`, `1.0.0-rc1`, `v1.2`) falls back to
   `install --version` with a notice
-- Class `winget` with `ensure => absent` no longer uses the package provider
-  (issue #35): it declares `winget::install::msstore { 'winget': ensure =>
-  'absent' }`, so the documented `Class['winget'] -> Package <| provider ==
-  winget |>` collector cannot cycle, and no `Package[...]` remains in the
-  catalog
 - Tasks `Find-Winget` no longer picks the wrong version (issue #36):
   `WindowsApps` is scanned first (Ruby resolver order) and candidates are
   sorted numerically on the version segment (`[version]`), so `1.10`
@@ -300,6 +309,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `winget::settings` (parent dir) now double single quotes (`''`) like
   `winget::install::local` already did; `winget::source` keeps
   `[regex]::Escape` for the list guard
+- Provider `install_options` source detection now also handles the
+  separate-element pair form (`['--source', 'msstore']`, as produced by
+  the structured `source` key) without duplicating the flag
+- Provider `self.prefetch(resources)` with a class-level `winget list`
+  cache: N `package` resources now share a single listing instead of one
+  listing per resource (use `clear_list_cache!` / `reset!` to invalidate)
+- `ensure => absent` for the `cdn` / `github` / `local` installs now also
+  removes the staged provisioned package (`Remove-AppxProvisionedPackage`):
+  `Remove-AppxPackage -AllUsers` alone fails with `0x80070032` on staged
+  images (seen on the CI runner), and provisioned installs from our own
+  bootstrap fallback were never removed. Each step is best effort; the exec
+  fails closed only when an instance still resolves. Note: removal can be
+  blocked by Windows itself (`0x80070032`, e.g. a provisioned bundle whose
+  registered instance refuses DeStage on stock images): the run then fails
+  closed instead of silently keeping winget
 
 ## [1.0.0] - 2026-10-13
 

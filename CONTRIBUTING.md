@@ -26,6 +26,18 @@ Thank you for considering a contribution to this module. This document describes
 - All public classes, defined types, facts and providers must carry puppet-strings documentation.
 - No secrets in plain text, no unnecessary dependencies.
 
+## Versioning policy
+
+This module follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html):
+
+- Breaking (major): type tightening (e.g. stricter `ensure`), parameter
+  removal or rename, default value changes, resource title changes, hiera
+  key or level changes, fact opt-in/opt-out changes (e.g. `winget_upgrades`
+  becoming opt-in).
+- Minor: new backward-compatible features (new classes, defines, facts,
+  tasks, functions, parameters with safe defaults).
+- Patch: bug fixes only, no behavior change for valid manifests.
+
 ## Releases
 
 Releases are cut by pushing a semver tag (`vX.Y.Z`) that matches `metadata.json`:
@@ -39,3 +51,9 @@ git push origin v1.0.0
 The release workflow re-runs lint and unit tests, builds the package with `pdk build`,
 publishes it to the Puppet Forge and creates a GitHub Release with the notes
 extracted from `CHANGELOG.md`.
+
+Before tagging, check the `CHANGELOG.md` categories (`Added` for new
+compatible features, `Changed` for behavior changes, `Fixed` for fixes
+only) against the versioning policy above, and decide between a patch and
+a major release when batching renames (e.g. schedule parameter renames
+like issue #73 warrant `2.0.0`, not `1.1.1`).
