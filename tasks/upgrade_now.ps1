@@ -299,6 +299,12 @@ function Get-PinnedIds($winget) {
   return $ids
 }
 
+# Import guard for the Pester suites (spec/pester): dot-sourcing this
+# script defines the functions above without running the task below, so
+# tests can call them with stubbed winget output. A real task run
+# (powershell -File) has an InvocationName of the script path, never '.'.
+if ($MyInvocation.InvocationName -eq '.') { return }
+
 try {
   $taskParams = Read-TaskParams
 } catch {

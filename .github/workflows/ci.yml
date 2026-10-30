@@ -96,6 +96,30 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  pester:
+    name: 'Pester (task scripts, Windows)'
+    # Executes the task scripts for real (issue #76): parsing, fail-closed
+    # input validation, Find-Winget selection and failure paths, with
+    # stubbed winget output — no live winget needed. Runs once (outside
+    # the acceptance matrix) on windows-latest with Pester 5.
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run Pester task suites
+        shell: pwsh
+        run: |
+          $pester5 = Get-Module -ListAvailable Pester | Where-Object { $_.Version.Major -eq 5 } | Sort-Object Version -Descending | Select-Object -First 1
+          if (-not $pester5) {
+            Install-Module Pester -Force -AllowClobber -SkipPublisherCheck -MinimumVersion 5.0 -Scope CurrentUser
+          }
+          Import-Module Pester -MinimumVersion 5.0 -ErrorAction Stop
+          $config = New-PesterConfiguration
+          $config.Run.Path = 'spec/pester'
+          $config.Output.Verbosity = 'Detailed'
+          $config.Run.Exit = $true
+          Invoke-Pester -Configuration $config
+
   acceptance:
     # Live acceptance (issue #43): every `puppet apply` below runs as SYSTEM
     # through a one-shot scheduled task, because the agent service runs as
@@ -733,6 +757,7 @@ jobs:
     needs:
       - validate
       - unit
+      - pester
       - acceptance
       - build
     # Run even when a needed job failed: a skipped required check would be

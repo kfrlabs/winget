@@ -1,0 +1,8 @@
+Name              Id                      Version   Available   Source
+--------------------------------------------------------------------
+Git               Git.Git                 2.40.0    2.41.0      winget
+The following packages have an upgrade available, but require explicit targeting:
+Name              Id                      Version   Available   Source
+--------------------------------------------------------------------
+Git               Git.Git                 2.40.0    2.41.0      winget
+Foo               Foo.Foo                 1.0       2.0         winget
