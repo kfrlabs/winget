@@ -43,7 +43,7 @@
 # @param entries
 #   Packages to manage, keyed by winget ID. Values are either a shorthand
 #   ensure string or a `Winget::Package` hash.
-# @param schedule
+# @param package_schedule
 #   Default Puppet `schedule` applied as metaparameter to every managed
 #   package. A per-package `schedule` key overrides it. Undef (default) means
 #   no schedule: packages are enforced on every agent run.
@@ -87,7 +87,7 @@
 #   }
 class winget::packages (
   Winget::PackagesHash $entries = {},
-  Optional[String[1]] $schedule = undef,
+  Optional[String[1]] $package_schedule = undef,
   Optional[String[1]] $reboot_resource = undef,
 ) {
   if $facts['os']['family'] != 'windows' {
@@ -176,7 +176,7 @@ class winget::packages (
     }
 
     $effective_schedule = $config['schedule'] ? {
-      undef   => $schedule,
+      undef   => $package_schedule,
       default => $config['schedule'],
     }
     $schedule_hash = $effective_schedule ? {

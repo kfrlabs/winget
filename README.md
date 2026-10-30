@@ -206,7 +206,7 @@ Or reuse a `schedule` resource declared elsewhere (e.g. in a profile):
 
 ```puppet
 class { 'winget::upgrade':
-  schedule => 'maintenance-window',
+  package_schedule => 'maintenance-window',
 }
 ```
 
@@ -327,7 +327,7 @@ winget::packages:
 include winget
 ```
 
-Direct use of the sub-class (e.g. with its own `schedule`) stays possible
+Direct use of the sub-class (e.g. with its own `package_schedule`) stays possible
 via the `winget::packages::entries` key:
 
 ```yaml
@@ -828,8 +828,8 @@ and [REFERENCE.md](REFERENCE.md#winget).
 
 Declares one `package` with the winget provider per entry of a
 Hiera-friendly hash, with structured install parameters (`scope`,
-`architecture`, `location`, `override`, ...), optional `schedule`, optional
-`reboot_resource` wiring, and a `hold` flag mapped to `winget pin`.
+`architecture`, `location`, `override`, ...), optional `package_schedule` (or
+per-package `schedule`), optional `reboot_resource` wiring, and a `hold` flag mapped to `winget pin`.
 See [Declaring Packages from Hiera](#declaring-packages-from-hiera-wingetpackages)
 and [REFERENCE.md](REFERENCE.md#winget--packages).
 

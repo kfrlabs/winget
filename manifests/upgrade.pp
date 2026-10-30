@@ -75,21 +75,16 @@
 #   by an installer (winget exit `0x8A150109`/`0x8A15010A`/`0x8A15010B`) is honored. Undef (default)
 #   means no reboot wiring: upgrades still succeed with a warning, exactly
 #   like the provider default.
-# @param schedule
+# @param package_schedule
 #   Name of a Puppet `schedule` resource applied as metaparameter to every
 #   managed package. Declare the resource yourself, or set `manage_schedule`
 #   to have this class declare it. Undef (default) means no schedule: packages
 #   are enforced on every agent run.
-#   Note: this parameter intentionally shares its name with the Puppet
-#   `schedule` metaparameter. In a resource-like class declaration (`class {
-#   'winget::upgrade': schedule => '...', }`) the class parameter wins and is
-#   forwarded as the metaparameter to the managed packages; this is covered
-#   by unit tests on Puppet 8 and OpenVox 8.
 # @param manage_schedule
-#   Whether this class declares `schedule { $schedule: ... }` from the
+#   Whether this class declares `schedule { $_schedule: ... }` from the
 #   `schedule_*` parameters below.
 # @param schedule_name
-#   Name used for the managed schedule when `schedule` is undef.
+#   Name used for the managed schedule when `package_schedule` is undef.
 # @param schedule_period
 #   `schedule` period.
 # @param schedule_range
@@ -137,14 +132,14 @@
 #   }
 #
 #   class { 'winget::upgrade':
-#     schedule => 'maintenance-window',
+#     package_schedule => 'maintenance-window',
 #   }
 class winget::upgrade (
   Array[String[1]] $exclude = [],
   Array[String[1]] $only = [],
   Boolean $respect_pins = true,
   Optional[String[1]] $reboot_resource = undef,
-  Optional[String[1]] $schedule = undef,
+  Optional[String[1]] $package_schedule = undef,
   Boolean $manage_schedule = false,
   String[1] $schedule_name = 'winget-upgrade-window',
   Enum['hourly', 'daily', 'weekly', 'monthly'] $schedule_period = 'weekly',
@@ -157,9 +152,9 @@ class winget::upgrade (
   }
 
   if $manage_schedule {
-    $_schedule = $schedule ? {
+    $_schedule = $package_schedule ? {
       undef   => $schedule_name,
-      default => $schedule,
+      default => $package_schedule,
     }
 
     # `weekday` is only valid on a weekly schedule.
@@ -178,7 +173,7 @@ class winget::upgrade (
       }
     }
   } else {
-    $_schedule = $schedule
+    $_schedule = $package_schedule
   }
 
   # Winget IDs are case-insensitive: compare lowercased. The enumeration

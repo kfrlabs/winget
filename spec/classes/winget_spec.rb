@@ -379,7 +379,7 @@ describe 'winget' do
         end
 
         it { is_expected.to compile.with_all_deps }
-        it { is_expected.to contain_class('winget::packages').with_schedule('maintenance-window') }
+        it { is_expected.to contain_class('winget::packages').with_package_schedule('maintenance-window') }
       end
 
       context 'with sources (preferred Hiera key winget::sources)' do

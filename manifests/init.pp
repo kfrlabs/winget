@@ -290,10 +290,10 @@ class winget (
     # installed. The sub-class is not contained here: that would create a
     # dependency cycle with `Class['winget'] -> Package <| provider == winget |>`.
     class { 'winget::packages':
-      entries         => $packages,
-      schedule        => $packages_schedule,
-      reboot_resource => $packages_reboot_resource,
-      require         => Class['winget'],
+      entries          => $packages,
+      package_schedule => $packages_schedule,
+      reboot_resource  => $packages_reboot_resource,
+      require          => Class['winget'],
     }
   }
 
