@@ -34,12 +34,12 @@ module PuppetX
       # header. Three characters minimum so short stray lines are not
       # mistaken for table boundaries (row skipping still tolerates any
       # length, see the parsers below).
-      SEPARATOR_RE = %r{\A\s*[-=]{3,}\s*\z}.freeze
+      SEPARATOR_RE = %r{\A\s*[-=]{3,}\s*\z}
       # Header cells are segmented on 2+ spaces or tabs (the first cell
       # is anchored at the line start). Data rows keep being sliced at
       # the resulting offsets: winget may shrink inter-column gaps to a
       # single space for long names, so rows must never be segmented.
-      HEADER_CELL_SPLIT_RE = %r{\s{2,}|\t+}.freeze
+      HEADER_CELL_SPLIT_RE = %r{\s{2,}|\t+}
       class << self
         # Clear memoized command output (primarily for testing).
         def reset!

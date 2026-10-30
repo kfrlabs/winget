@@ -47,7 +47,8 @@ RSpec.configure do |c|
   end
   c.filter_run_excluding(bolt: true) unless ENV['GEM_BOLT']
   c.after(:suite) do
-    RSpec::Puppet::Coverage.report!(0)
+    # Measured floor from parallel_spec resource coverage (41 resources, 29 touched, 70.73%), ratchet upward, never downward.
+    RSpec::Puppet::Coverage.report!(70)
   end
 
   # Filter backtrace noise
