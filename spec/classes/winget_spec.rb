@@ -269,6 +269,48 @@ describe 'winget' do
 
         it { is_expected.to compile.with_all_deps }
         it { is_expected.to contain_winget__install__cdn('winget').with_proxy('http://proxy.example.com:8080') }
+
+        it 'redacts the download environment (Sensitive) while keeping the plain-string value working' do
+          exec = catalogue.resource('Exec[winget_install_cdn_winget]')
+          environment = exec[:environment]
+          environment = environment.unwrap if environment.respond_to?(:unwrap)
+          expect(environment).to eq(['HTTPS_PROXY=http://proxy.example.com:8080', 'HTTP_PROXY=http://proxy.example.com:8080'])
+          expect(exec.sensitive_parameters.map(&:to_sym)).to include(:environment)
+        end
+      end
+
+      context 'with Sensitive proxy containing credentials' do
+        # NB: a Sensitive value cannot travel through the rspec-puppet params
+        # hash (it is not serializable into the test manifest), so the class
+        # itself stays on defaults here and the Sensitive proxy is exercised
+        # through the same define the class declares, in the same catalog.
+        let(:params) { { enable_winget: false } }
+        let(:pre_condition) do
+          <<~PUPPET
+            winget::install::cdn { 'sensitive':
+              proxy => Sensitive('http://user:pass@host:8080'),
+            }
+          PUPPET
+        end
+
+        it { is_expected.to compile.with_all_deps }
+
+        it 'exports the unwrapped proxy for the download' do
+          exec = catalogue.resource('Exec[winget_install_cdn_sensitive]')
+          environment = exec[:environment]
+          environment = environment.unwrap if environment.respond_to?(:unwrap)
+          expect(environment).to eq(['HTTPS_PROXY=http://user:pass@host:8080', 'HTTP_PROXY=http://user:pass@host:8080'])
+        end
+
+        it 'keeps the environment parameter Sensitive so credentials are redacted in catalogs and reports' do
+          exec = catalogue.resource('Exec[winget_install_cdn_sensitive]')
+          expect(exec.sensitive_parameters.map(&:to_sym)).to include(:environment)
+        end
+
+        it 'never puts the credentials on the command line' do
+          command = catalogue.resource('Exec[winget_install_cdn_sensitive]')[:command]
+          expect(command).not_to match(%r{user:pass})
+        end
       end
 
       context 'with accept_source_agreements => false' do
