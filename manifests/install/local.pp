@@ -38,6 +38,8 @@ define winget::install::local (
   Optional[String] $version   = undef,
   Array[String] $dependencies = []
 ) {
+  include winget::install::common
+
   # Hardening (issue #74): interpolated paths sit in single-quoted
   # PowerShell literals inside a double-quoted -Command string, so a double
   # quote would terminate the outer string and break (or alter) the command.
@@ -79,8 +81,8 @@ define winget::install::local (
     # which offline installs may create). Each step is best effort; the exec
     # fails closed only when an instance still resolves afterwards.
     exec { "winget_uninstall_local_${title}":
-      command => "${powershell} -NoProfile -Command \"\$pkgs = Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller; if (\$pkgs) { try { \$pkgs | Remove-AppxPackage -AllUsers -ErrorAction Stop } catch { Write-Warning ('Remove-AppxPackage failed, trying provisioned removal: ' + \$_.Exception.Message) } }; \$prov = Get-AppxProvisionedPackage -Online | Where-Object { \$_.PackageName -like 'Microsoft.DesktopAppInstaller*' }; if (\$prov) { try { \$prov | ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName \$_.PackageName -ErrorAction Stop } } catch { Write-Warning ('Remove-AppxProvisionedPackage failed: ' + \$_.Exception.Message) } }; if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { throw 'Microsoft.DesktopAppInstaller is still installed' }\"",
-      onlyif  => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } elseif (Get-AppxProvisionedPackage -Online | Where-Object { \$_.PackageName -like 'Microsoft.DesktopAppInstaller*' }) { exit 0 } else { exit 1 }\"",
+      command => "${powershell} -NoProfile -Command \"${winget::install::common::uninstall_command}\"",
+      onlyif  => "${powershell} -NoProfile -Command \"${winget::install::common::uninstall_onlyif}\"",
       timeout => 300,
     }
   } else {
@@ -93,9 +95,9 @@ define winget::install::local (
     # `1.8.2391.0` satisfies pin `1.8.2391`).
     if $real_ensure =~ /^\d+(\.\d+)+$/ {
       $version_re = regsubst($real_ensure, '\.', '\\.', 'G')
-      $presence_check = "if (((Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller | Select-Object -First 1).Version -join '') -match '^${version_re}(\\.|$)') { exit 0 } else { exit 1 }"
+      $presence_check = sprintf($winget::install::common::presence_check_version_template, $version_re)
     } else {
-      $presence_check = 'if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }'
+      $presence_check = $winget::install::common::presence_check
     }
 
     # Install dependencies first. The dependency identity (package Name) is
@@ -110,7 +112,7 @@ define winget::install::local (
     $dependencies.each |$dep| {
       $quoted_dep = regsubst($dep, "'", "''", 'G')
       exec { "winget_install_dep_${dep}_${title}":
-        command => "${powershell} -NoProfile -Command \"try { Add-AppxPackage -Path '${quoted_dep}' -ErrorAction Stop } catch { Add-AppxProvisionedPackage -Online -PackagePath '${quoted_dep}' -SkipLicense }\"",
+        command => "${powershell} -NoProfile -Command \"${sprintf($winget::install::common::local_install_template, $quoted_dep, $quoted_dep)}\"",
         unless  => "${powershell} -NoProfile -Command \"Add-Type -AssemblyName System.IO.Compression.FileSystem; \$zip = [System.IO.Compression.ZipFile]::OpenRead('${quoted_dep}'); try { \$entry = \$zip.GetEntry('AppxManifest.xml'); if (\$entry) { \$reader = New-Object System.IO.StreamReader(\$entry.Open()); [xml]\$manifest = \$reader.ReadToEnd(); \$dep_name = \$manifest.Package.Identity.Name } else { \$bundle_entry = \$zip.GetEntry('AppxMetadata/AppxBundleManifest.xml'); \$bundle_reader = New-Object System.IO.StreamReader(\$bundle_entry.Open()); [xml]\$bundle_manifest = \$bundle_reader.ReadToEnd(); \$dep_name = \$bundle_manifest.Bundle.Identity.Name } } finally { if (\$reader) { \$reader.Close() }; if (\$bundle_reader) { \$bundle_reader.Close() }; \$zip.Dispose() }; if (\$dep_name -and (Get-AppxPackage -AllUsers -Name \$dep_name)) { exit 0 } else { exit 1 }\"",
         timeout => 300,
       }
@@ -120,7 +122,7 @@ define winget::install::local (
     # `Add-AppxProvisionedPackage -Online -SkipLicense`, which stages the
     # package for all users without a Store license.
     exec { "winget_install_local_${title}":
-      command   => "${powershell} -NoProfile -Command \"try { Add-AppxPackage -Path '${quoted_source}' -ErrorAction Stop } catch { Add-AppxProvisionedPackage -Online -PackagePath '${quoted_source}' -SkipLicense }\"",
+      command   => "${powershell} -NoProfile -Command \"${sprintf($winget::install::common::local_install_template, $quoted_source, $quoted_source)}\"",
       unless    => "${powershell} -NoProfile -Command \"${presence_check}\"",
       timeout   => 300,
       tries     => 3,

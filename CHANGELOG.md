@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Single source of truth for duplicated logic (issue #75), no behavior
+  change: the fixed-width winget table functions shared by
+  `tasks/list_upgrades.ps1` and `tasks/upgrade_now.ps1` now live in
+  `tasks/winget_task_common.ps1` (dot-sourced by both tasks), and the
+  `winget::install::cdn` / `github` / `local` uninstall, presence-check and
+  download/install PowerShell fragments now live in the private class
+  `winget::install::common`. Task JSON contracts, exit codes, exec titles
+  and idempotence guards are unchanged.
+
 ### Fixed
 - Double quotes in values interpolated into PowerShell `-Command` strings
   fail fast at compile time (issue #74): `winget::pin` (title, version,

@@ -14,6 +14,7 @@
 #>
 
 BeforeAll {
+  . (Join-Path $PSScriptRoot '../../tasks/winget_task_common.ps1')
   . (Join-Path $PSScriptRoot '../../tasks/list_upgrades.ps1')
 
   $script:isWindowsOS = ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT)
