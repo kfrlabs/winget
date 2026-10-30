@@ -730,7 +730,10 @@ jobs:
     needs:
       - validate
       - unit
-    runs-on: ubuntu-latest
+    # Pinned to 24.04: apt.puppet.com has no puppet-tools-release pocket
+    # for Ubuntu 26.04 (resolute) yet, so the PDK install below 404s on
+    # ubuntu-latest runners. Revert to ubuntu-latest once published.
+    runs-on: ubuntu-24.04
     env:
       PUPPET_GEM_VERSION: '~> 8.0'
     steps:
