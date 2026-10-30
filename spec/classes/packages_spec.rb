@@ -231,7 +231,7 @@ describe 'winget::packages' do
         let(:params) do
           {
             entries: { 'Git.Git' => 'latest' },
-            schedule: 'maintenance-window',
+            package_schedule: 'maintenance-window',
           }
         end
         let(:pre_condition) do
@@ -252,7 +252,7 @@ describe 'winget::packages' do
         let(:params) do
           {
             entries: { 'Git.Git' => { 'ensure' => 'latest', 'schedule' => 'fast-lane' } },
-            schedule: 'maintenance-window',
+            package_schedule: 'maintenance-window',
           }
         end
         let(:pre_condition) do

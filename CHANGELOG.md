@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- BREAKING: Rename `schedule` class parameter to `package_schedule` in
+  `winget::packages` and `winget::upgrade` (issue #73): removes collision with
+  the Puppet `schedule` metaparameter and eliminates the parser warning.
+  Hiera automatic parameter lookup keys `winget::packages::schedule` and
+  `winget::upgrade::schedule` become `winget::packages::package_schedule` and
+  `winget::upgrade::package_schedule`. Resource-style class declarations must
+  use `package_schedule`. Forwarding from `winget::packages_schedule` in the
+  main class is preserved (`package_schedule => $packages_schedule`), and
+  per-package `schedule` in `entries` is unchanged.
 - Single source of truth for duplicated logic (issue #75), no behavior
   change: the fixed-width winget table functions shared by
   `tasks/list_upgrades.ps1` and `tasks/upgrade_now.ps1` now live in

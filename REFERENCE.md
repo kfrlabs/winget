@@ -442,7 +442,7 @@ class { 'winget::packages':
 The following parameters are available in the `winget::packages` class:
 
 * [`entries`](#-winget--packages--entries)
-* [`schedule`](#-winget--packages--schedule)
+* [`package_schedule`](#-winget--packages--package_schedule)
 * [`reboot_resource`](#-winget--packages--reboot_resource)
 
 ##### <a name="-winget--packages--entries"></a>`entries`
@@ -454,7 +454,7 @@ ensure string or a `Winget::Package` hash.
 
 Default value: `{}`
 
-##### <a name="-winget--packages--schedule"></a>`schedule`
+##### <a name="-winget--packages--package_schedule"></a>`package_schedule`
 
 Data type: `Optional[String[1]]`
 
@@ -754,7 +754,7 @@ schedule { 'maintenance-window':
 }
 
 class { 'winget::upgrade':
-  schedule => 'maintenance-window',
+  package_schedule => 'maintenance-window',
 }
 ```
 
@@ -766,7 +766,7 @@ The following parameters are available in the `winget::upgrade` class:
 * [`only`](#-winget--upgrade--only)
 * [`respect_pins`](#-winget--upgrade--respect_pins)
 * [`reboot_resource`](#-winget--upgrade--reboot_resource)
-* [`schedule`](#-winget--upgrade--schedule)
+* [`package_schedule`](#-winget--upgrade--package_schedule)
 * [`manage_schedule`](#-winget--upgrade--manage_schedule)
 * [`schedule_name`](#-winget--upgrade--schedule_name)
 * [`schedule_period`](#-winget--upgrade--schedule_period)
@@ -815,7 +815,7 @@ like the provider default.
 
 Default value: `undef`
 
-##### <a name="-winget--upgrade--schedule"></a>`schedule`
+##### <a name="-winget--upgrade--package_schedule"></a>`package_schedule`
 
 Data type: `Optional[String[1]]`
 
@@ -823,11 +823,6 @@ Name of a Puppet `schedule` resource applied as metaparameter to every
 managed package. Declare the resource yourself, or set `manage_schedule`
 to have this class declare it. Undef (default) means no schedule: packages
 are enforced on every agent run.
-Note: this parameter intentionally shares its name with the Puppet
-`schedule` metaparameter. In a resource-like class declaration (`class {
-'winget::upgrade': schedule => '...', }`) the class parameter wins and is
-forwarded as the metaparameter to the managed packages; this is covered
-by unit tests on Puppet 8 and OpenVox 8.
 
 Default value: `undef`
 
@@ -835,7 +830,7 @@ Default value: `undef`
 
 Data type: `Boolean`
 
-Whether this class declares `schedule { $schedule: ... }` from the
+Whether this class declares `schedule { $_schedule: ... }` from the
 `schedule_*` parameters below.
 
 Default value: `false`
@@ -844,7 +839,7 @@ Default value: `false`
 
 Data type: `String[1]`
 
-Name used for the managed schedule when `schedule` is undef.
+Name used for the managed schedule when `package_schedule` is undef.
 
 Default value: `'winget-upgrade-window'`
 

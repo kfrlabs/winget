@@ -172,7 +172,7 @@ describe 'winget::upgrade' do
       end
 
       context 'with an external schedule' do
-        let(:params) { { schedule: 'maintenance-window' } }
+        let(:params) { { package_schedule: 'maintenance-window' } }
         let(:pre_condition) do
           <<~PUPPET
             schedule { 'maintenance-window':
@@ -209,7 +209,7 @@ describe 'winget::upgrade' do
         let(:params) do
           {
             manage_schedule: true,
-            schedule: 'custom-window',
+            package_schedule: 'custom-window',
             schedule_period: 'daily',
             schedule_range: '2 - 4',
           }
