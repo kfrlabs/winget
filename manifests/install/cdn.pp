@@ -39,7 +39,12 @@
 #   by direct package installation.
 #
 # @param proxy
-#   Proxy URL for the download.
+#   Proxy URL for the download. Accepts a plain string or `Sensitive` (e.g.
+#   `Sensitive('http://user:pass@proxy.example.com:8080')`): the download
+#   environment is `Sensitive`-wrapped so credentials are redacted from
+#   catalogs, PuppetDB and reports. A plain string still works but embeds
+#   credentials in clear text when the URL contains them, so prefer `Sensitive`
+#   for URLs with credentials.
 #
 # @param retry_count
 #   Number of retry attempts for the installation. Default: 3.
@@ -59,7 +64,7 @@ define winget::install::cdn (
   Winget::Ensure $ensure                    = 'present',
   Optional[String] $version                 = undef,
   Boolean $accept_source_agreements         = true,
-  Optional[String] $proxy                   = undef,
+  Optional[Variant[String, Sensitive[String]]] $proxy                   = undef,
   Integer $retry_count                      = 3,
   Integer $retry_interval                   = 10,
   Boolean $fail_on_error                    = true
@@ -90,7 +95,11 @@ define winget::install::cdn (
     }
   } else {
     if $proxy {
-      $download_env = ["HTTPS_PROXY=${proxy}", "HTTP_PROXY=${proxy}"]
+      $proxy_unwrapped = $proxy =~ Sensitive ? {
+        true    => $proxy.unwrap,
+        default => $proxy,
+      }
+      $download_env = Sensitive(["HTTPS_PROXY=${proxy_unwrapped}", "HTTP_PROXY=${proxy_unwrapped}"])
     } else {
       $download_env = undef
     }

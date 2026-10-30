@@ -69,7 +69,12 @@
 #
 # @param proxy
 #   Proxy URL for downloading winget (e.g., 'http://proxy.example.com:8080'). Only used
-#   when downloading from Microsoft CDN or GitHub. Default: undef (uses system proxy).
+#   when downloading from Microsoft CDN or GitHub. Accepts a plain string or
+#   `Sensitive` (e.g. `Sensitive('http://user:pass@proxy.example.com:8080')`):
+#   the download environment is `Sensitive`-wrapped so credentials are redacted
+#   from catalogs, PuppetDB and reports. A plain string still works but embeds
+#   credentials in clear text when the URL contains them, so prefer `Sensitive`
+#   for URLs with credentials. Default: undef (uses system proxy).
 #
 # @param accept_source_agreements
 #   Whether to automatically accept source agreements during bootstrap. Default: true.
@@ -132,7 +137,7 @@ class winget (
   Enum['msstore', 'cdn', 'github', 'auto'] $source = 'auto',
   Optional[String] $source_path     = undef,
   Array[String] $dependencies       = [],
-  Optional[String] $proxy           = undef,
+  Optional[Variant[String, Sensitive[String]]] $proxy           = undef,
   Boolean $accept_source_agreements = true,
   Boolean $enable_winget            = true,
   Winget::PackagesHash $packages = {},

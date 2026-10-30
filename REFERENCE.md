@@ -230,10 +230,15 @@ Default value: `[]`
 
 ##### <a name="-winget--proxy"></a>`proxy`
 
-Data type: `Optional[String]`
+Data type: `Optional[Variant[String, Sensitive[String]]]`
 
 Proxy URL for downloading winget (e.g., 'http://proxy.example.com:8080'). Only used
-when downloading from Microsoft CDN or GitHub. Default: undef (uses system proxy).
+when downloading from Microsoft CDN or GitHub. Accepts a plain string or
+`Sensitive` (e.g. `Sensitive('http://user:pass@proxy.example.com:8080')`):
+the download environment is `Sensitive`-wrapped so credentials are redacted
+from catalogs, PuppetDB and reports. A plain string still works but embeds
+credentials in clear text when the URL contains them, so prefer `Sensitive`
+for URLs with credentials. Default: undef (uses system proxy).
 
 Default value: `undef`
 
@@ -1003,9 +1008,14 @@ Default value: `true`
 
 ##### <a name="-winget--install--cdn--proxy"></a>`proxy`
 
-Data type: `Optional[String]`
+Data type: `Optional[Variant[String, Sensitive[String]]]`
 
-Proxy URL for the download.
+Proxy URL for the download. Accepts a plain string or `Sensitive` (e.g.
+`Sensitive('http://user:pass@proxy.example.com:8080')`): the download
+environment is `Sensitive`-wrapped so credentials are redacted from
+catalogs, PuppetDB and reports. A plain string still works but embeds
+credentials in clear text when the URL contains them, so prefer `Sensitive`
+for URLs with credentials.
 
 Default value: `undef`
 
@@ -1081,9 +1091,14 @@ Default value: `undef`
 
 ##### <a name="-winget--install--github--proxy"></a>`proxy`
 
-Data type: `Optional[String]`
+Data type: `Optional[Variant[String, Sensitive[String]]]`
 
-Proxy URL for the download.
+Proxy URL for the download. Accepts a plain string or `Sensitive` (e.g.
+`Sensitive('http://user:pass@proxy.example.com:8080')`): the download
+environment is `Sensitive`-wrapped so credentials are redacted from
+catalogs, PuppetDB and reports. A plain string still works but embeds
+credentials in clear text when the URL contains them, so prefer `Sensitive`
+for URLs with credentials.
 
 Default value: `undef`
 
@@ -1212,9 +1227,14 @@ Default value: `true`
 
 ##### <a name="-winget--install--msstore--proxy"></a>`proxy`
 
-Data type: `Optional[String]`
+Data type: `Optional[Variant[String, Sensitive[String]]]`
 
-Proxy URL for the download.
+Proxy URL for the download. Accepts a plain string or `Sensitive` (e.g.
+`Sensitive('http://user:pass@proxy.example.com:8080')`): forwarded to
+`winget::install::cdn`, whose download environment is `Sensitive`-wrapped
+so credentials are redacted from catalogs, PuppetDB and reports. A plain
+string still works but embeds credentials in clear text when the URL
+contains them, so prefer `Sensitive` for URLs with credentials.
 
 Default value: `undef`
 

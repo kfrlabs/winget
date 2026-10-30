@@ -21,7 +21,12 @@
 #   by direct package installation.
 #
 # @param proxy
-#   Proxy URL for the download.
+#   Proxy URL for the download. Accepts a plain string or `Sensitive` (e.g.
+#   `Sensitive('http://user:pass@proxy.example.com:8080')`): forwarded to
+#   `winget::install::cdn`, whose download environment is `Sensitive`-wrapped
+#   so credentials are redacted from catalogs, PuppetDB and reports. A plain
+#   string still works but embeds credentials in clear text when the URL
+#   contains them, so prefer `Sensitive` for URLs with credentials.
 #
 # @param retry_count
 #   Number of retry attempts for the installation. Default: 3.
@@ -37,7 +42,7 @@ define winget::install::msstore (
   Winget::Ensure $ensure                    = 'present',
   Optional[String] $version                 = undef,
   Boolean $accept_source_agreements         = true,
-  Optional[String] $proxy                   = undef,
+  Optional[Variant[String, Sensitive[String]]] $proxy                   = undef,
   Integer $retry_count                      = 3,
   Integer $retry_interval                   = 10,
   Boolean $fail_on_error                    = true
