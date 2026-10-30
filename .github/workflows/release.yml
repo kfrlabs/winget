@@ -38,9 +38,70 @@ jobs:
       - name: Unit tests
         run: bundle exec rake parallel_spec
 
+  acceptance-gate:
+    name: Acceptance gate (CI must pass)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require successful CI for the release commit
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Release gate (issue #79): block the release when acceptance (the
+          # CI workflow) has not succeeded for the commit being released.
+          # The release commit is github.sha (HEAD for both tag pushes and
+          # workflow_dispatch dry runs). The preinstalled gh CLI queries the
+          # API directly (no third-party actions, per repo policy); python3
+          # parses the JSON since jq may not be preinstalled.
+          # The CI workflow file (ci.yml) is queried directly with a
+          # server-side head_sha filter, so older tags beyond the first
+          # page cannot false-negative. A query failure
+          # (network/permission/rate-limit) fails closed on tag pushes; on
+          # workflow_dispatch dry runs it only warns (validation only). A
+          # missing success fails closed, except on workflow_dispatch dry
+          # runs (an arbitrary version input may have no CI run), which only
+          # warn — dry runs validate the version only.
+          set -eu
+          sha="$GITHUB_SHA"
+          if [ -z "$sha" ]; then
+            echo '::error::Could not resolve the release commit SHA.'
+            exit 1
+          fi
+          if ! gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${sha}&per_page=10" > /tmp/ci_runs.json; then
+            if [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]; then
+              echo '::warning::Failed to query CI runs (network/permission/rate-limit); continuing because this is a dry run (version validation only).'
+              exit 0
+            fi
+            echo '::error::Failed to query CI runs (network/permission/rate-limit).'
+            exit 1
+          fi
+          SHA="$sha" EVENT="$GITHUB_EVENT_NAME" python3 - /tmp/ci_runs.json <<'EOF'
+          import json, os, sys
+          sha = os.environ.get('SHA', '')
+          event = os.environ.get('EVENT', '')
+          with open(sys.argv[1], encoding='utf-8') as f:
+              data = json.load(f)
+          ok = any(
+              r.get('name', 'CI') == 'CI'
+              and r.get('head_sha') == sha
+              and r.get('conclusion') == 'success'
+              for r in data.get('workflow_runs', [])
+          )
+          if ok:
+              print(f'CI succeeded for commit {sha}.')
+              sys.exit(0)
+          if event == 'workflow_dispatch':
+              print(f'::warning::No successful CI run found for commit {sha}; continuing because this is a dry run (version validation only).')
+              sys.exit(0)
+          print(f'::error::No successful CI run found for commit {sha}. Merge to main and wait for CI before releasing.')
+          sys.exit(1)
+          EOF
+
   release:
     name: Build, publish and release
-    needs: test
+    needs: [test, acceptance-gate]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -58,9 +119,11 @@ jobs:
           bundler-cache: true
       - name: Resolve release version
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           if [ "${{ github.event_name }}" = 'workflow_dispatch' ]; then
-            version='${{ inputs.version }}'
+            version="${INPUT_VERSION}"
           else
             version="${GITHUB_REF_NAME#v}"
           fi
@@ -68,13 +131,22 @@ jobs:
             echo '::error::Could not resolve a release version.'
             exit 1
           fi
+          # SemVer check (issue #79): the tag's v prefix is stripped above,
+          # prerelease/build metadata stays allowed; strict core (no
+          # leading zeros).
+          if ! printf '%s' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
+            echo "::error::Invalid version '${version}'. Expected SemVer X.Y.Z with optional prerelease/build metadata."
+            exit 1
+          fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Releasing version ${version}."
       - name: Tag must match metadata.json version
         # Skipped on dry runs: there is no tag, only the validated version.
         if: github.event_name != 'workflow_dispatch'
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          version='${{ steps.version.outputs.version }}'
+          version="${RELEASE_VERSION}"
           metadata_version="$(ruby -rjson -e "puts JSON.parse(File.read('metadata.json'))['version']")"
           if [ "$version" != "$metadata_version" ]; then
             echo "::error::Tag v${version} does not match metadata.json version ${metadata_version}."
@@ -93,8 +165,10 @@ jobs:
         # Runs BEFORE the Forge publish (issue #42): a missing entry used to
         # fail the job after an irreversible upload, leaving the Forge and
         # GitHub in different states.
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          version='${{ steps.version.outputs.version }}'
+          version="${RELEASE_VERSION}"
           python3 - "$version" <<'EOF'
           import re, sys
           version = sys.argv[1]
@@ -147,6 +221,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          version='${{ steps.version.outputs.version }}'
+          version="${RELEASE_VERSION}"
           gh release create "v${version}" --title "v${version}" --notes-file /tmp/release_notes.md pkg/*.tar.gz
