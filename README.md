@@ -908,9 +908,10 @@ Provider for the `package` type using Windows Package Manager.
 
 **Features**: installable, uninstallable, upgradeable, versionable, install_options, uninstall_options, holdable
 
-**Hold support**: `mark => hold` maps to `winget pin add` (plain pinning:
-excluded from `upgrade --all`, explicit upgrades still allowed);
-`mark => none` (default) maps to `winget pin remove`.
+**Hold support**: mark is unmanaged unless declared (no extra winget pin list cost);
+`mark => hold` maps to `winget pin add` (plain pinning: excluded from
+`upgrade --all`, explicit upgrades still allowed); explicitly declared
+`mark => none` maps to `winget pin remove`.
 
 **Default flags** (always after the subcommand; only flags documented for that subcommand are used):
 - `install` / `upgrade`: `--accept-package-agreements --accept-source-agreements --disable-interactivity --exact --silent`
