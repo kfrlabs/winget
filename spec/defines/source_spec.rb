@@ -124,6 +124,61 @@ describe 'winget::source' do
     end
   end
 
+  context 'with a Sensitive header from a Hiera lookup (eyaml-simulated, issue #69)' do
+    # NB: a Sensitive value cannot travel through the rspec-puppet params
+    # hash (it is not serializable into the test manifest), and a raw YAML
+    # Hiera value cannot produce a Sensitive value either — hiera-eyaml (an
+    # encrypted value looked up as Sensitive) is the supported Hiera path.
+    # A Sensitive built from a variable simulates exactly what such a lookup
+    # returns: a genuine Sensitive value, not a literal in the resource body.
+    # A Deferred-wrapped header was evaluated as an alternative and is NOT
+    # supported: the define unwraps the header while the catalog compiles
+    # (`if $header` / `${header.unwrap}`), so a Deferred value fails
+    # compilation (e.g. NoMethodError for an undefined `dispatcher` method;
+    # verified on Puppet 8.10 / rspec-puppet 5) — both
+    # in rspec-puppet and in a real `puppet apply --noop` compile. There is
+    # intentionally no Deferred spec: this context is the closest meaningful
+    # regression test (the plain-string rejection below covers the negative
+    # side).
+    let(:params) { { ensure: 'absent' } }
+    let(:pre_condition) do
+      <<~PUPPET
+        class hiera_sim {
+          $header_from_hiera = Sensitive('s3cr3t-from-hiera')
+          winget::source { 'hiera-source':
+            url    => 'https://winget.contoso.example.com/cache',
+            header => $header_from_hiera,
+          }
+        }
+        include hiera_sim
+      PUPPET
+    end
+
+    it { is_expected.to compile.with_all_deps }
+
+    it 'never puts the unwrapped header on the command line' do
+      command = catalogue.resource('Exec', 'winget-source-add-hiera-source')[:command]
+      expect(command).not_to match(%r{s3cr3t-from-hiera})
+    end
+
+    it 'references the header via an environment variable in the command' do
+      is_expected.to contain_exec('winget-source-add-hiera-source')
+        .with_command(%r{--header \$env:WINGET_SOURCE_HEADER})
+    end
+
+    it 'passes the header through the environment parameter only' do
+      exec = catalogue.resource('Exec', 'winget-source-add-hiera-source')
+      environment = exec[:environment]
+      environment = environment.unwrap if environment.respond_to?(:unwrap)
+      expect(environment).to eq(['WINGET_SOURCE_HEADER=s3cr3t-from-hiera'])
+    end
+
+    it 'keeps the environment parameter Sensitive so the secret is redacted in catalogs and reports' do
+      exec = catalogue.resource('Exec', 'winget-source-add-hiera-source')
+      expect(exec.sensitive_parameters.map(&:to_sym)).to include(:environment)
+    end
+  end
+
   context 'with a plain-string header' do
     let(:params) do
       {

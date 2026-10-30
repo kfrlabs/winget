@@ -449,11 +449,46 @@ class { 'winget::sources':
 Class['winget'] -> Class['winget::sources']
 ```
 
-The optional `header` parameter (REST auth header) is `Sensitive` and never
-lands in logs or reports: the unwrapped value is passed to the child
-process through an environment variable (`WINGET_SOURCE_HEADER`), never on
-the command line, so it does not appear in debug output, process listings
-or failure reports either.
+The optional `header` parameter (REST auth header) must be `Sensitive`
+(a plain string fails compilation). `Sensitive` keeps the value out of
+Puppet logs, reports and stored catalogs, and out of the PowerShell
+`-Command` text: the command carries only the literal
+`$env:WINGET_SOURCE_HEADER`, resolved by PowerShell at runtime from the
+exec environment, so the secret appears in neither debug output nor failure
+reports. Residual exposure: PowerShell expands the variable, so `winget.exe`
+receives the secret as a `--header` argument — visible in the `winget.exe`
+process command line for the duration of the call (to local administrators
+and process-auditing tools). `winget source add` offers no file or
+secret-store alternative to `--header`, so this exposure is inherent:
+scope the header accordingly (least privilege, short lifetime, rotatable).
+
+A raw YAML Hiera value cannot produce a `Sensitive` value, so store the
+header encrypted with hiera-eyaml and look it up as `Sensitive`:
+
+```yaml
+# common.eyaml (encrypted with hiera-eyaml)
+winget::private_source_header: ENC[PKCS7,.....]
+
+# common.yaml
+lookup_options:
+  winget::private_source_header:
+    convert_to: Sensitive
+```
+
+```puppet
+$header = lookup('winget::private_source_header')
+winget::source { 'contoso':
+  url         => 'https://winget.contoso.example.com/cache',
+  source_type => 'Microsoft.Rest',
+  trust_level => 'trusted',
+  header      => $header,
+}
+```
+
+A `Deferred`-wrapped header (e.g. `Deferred('sensitive', ...)`) is not
+supported: the header is unwrapped while the catalog compiles, so a
+`Deferred` value fails compilation — keep the value `Sensitive` via
+hiera-eyaml instead.
 
 #### Install Scope and Structured Parameters
 
