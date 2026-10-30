@@ -7,6 +7,7 @@
 ### Classes
 
 * [`winget`](#winget): Manages the installation and configuration of the Windows Package Manager (winget).
+* [`winget::install::common`](#winget--install--common): Private shared strings for `winget::install::*` (issue #75).
 * [`winget::packages`](#winget--packages): Declare winget packages from a Hiera-friendly hash.
 * [`winget::settings`](#winget--settings): Manage the winget client configuration (settings.json).
 * [`winget::sources`](#winget--sources): Manage winget package sources from a Hiera-friendly hash.
@@ -337,6 +338,21 @@ Data type: `Optional[String]`
 Explicit settings.json path forwarded to `winget::settings`.
 
 Default value: `undef`
+
+### <a name="winget--install--common"></a>`winget::install::common`
+
+Single source of truth for the PowerShell fragments duplicated across
+`winget::install::cdn`, `winget::install::github` and
+`winget::install::local`: the uninstall command and its `onlyif` guard,
+the presence-only install guard, the version-aware presence-check
+template and the download/install command templates.
+
+Private: do not declare this class directly. The install defines consume
+these variables (`$winget::install::common::...`), filling the
+placeholders with `sprintf` (their own URI, source path or escaped
+version). The composed commands are unchanged: the `cdn` presence-only
+guard and its version warning, the `msstore` alias and the `local`
+dependency guard stay exactly as they are.
 
 ### <a name="winget--packages"></a>`winget::packages`
 

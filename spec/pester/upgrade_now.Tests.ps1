@@ -18,10 +18,13 @@
   test sees its own file's functions. Do not enable Pester parallel
   containers without isolating the dot-sourced functions: parallel
   containers share the session state, so same-named functions would be
-  last-writer-wins.
+  last-writer-wins. Get-PinnedIds lives in the shared helper (issue #75),
+  so both files exercise the same definition; only Read-TaskParams (and
+  the per-task enumerators) still differ per file.
 #>
 
 BeforeAll {
+  . (Join-Path $PSScriptRoot '../../tasks/winget_task_common.ps1')
   . (Join-Path $PSScriptRoot '../../tasks/upgrade_now.ps1')
 
   $script:isWindowsOS = ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT)

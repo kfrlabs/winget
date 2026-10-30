@@ -69,6 +69,8 @@ define winget::install::cdn (
   Integer $retry_interval                   = 10,
   Boolean $fail_on_error                    = true
 ) {
+  include winget::install::common
+
   if $version {
     warning("winget::install::cdn[${title}]: the version parameter is deprecated and ignored (the cdn source always serves latest), use ensure instead.")
   }
@@ -89,8 +91,8 @@ define winget::install::cdn (
     # which our own bootstrap fallback creates). Each step is best effort;
     # the exec fails closed only when an instance still resolves afterwards.
     exec { "winget_uninstall_cdn_${title}":
-      command => "${powershell} -NoProfile -Command \"\$pkgs = Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller; if (\$pkgs) { try { \$pkgs | Remove-AppxPackage -AllUsers -ErrorAction Stop } catch { Write-Warning ('Remove-AppxPackage failed, trying provisioned removal: ' + \$_.Exception.Message) } }; \$prov = Get-AppxProvisionedPackage -Online | Where-Object { \$_.PackageName -like 'Microsoft.DesktopAppInstaller*' }; if (\$prov) { try { \$prov | ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName \$_.PackageName -ErrorAction Stop } } catch { Write-Warning ('Remove-AppxProvisionedPackage failed: ' + \$_.Exception.Message) } }; if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { throw 'Microsoft.DesktopAppInstaller is still installed' }\"",
-      onlyif  => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } elseif (Get-AppxProvisionedPackage -Online | Where-Object { \$_.PackageName -like 'Microsoft.DesktopAppInstaller*' }) { exit 0 } else { exit 1 }\"",
+      command => "${powershell} -NoProfile -Command \"${winget::install::common::uninstall_command}\"",
+      onlyif  => "${powershell} -NoProfile -Command \"${winget::install::common::uninstall_onlyif}\"",
       timeout => 300,
     }
   } else {
@@ -132,13 +134,13 @@ define winget::install::cdn (
     }
 
     exec { "winget_install_cdn_${title}":
-      command     => "${powershell} -NoProfile -ExecutionPolicy Bypass -Command \"\$ProgressPreference = 'SilentlyContinue'; \$workDir = Join-Path \$env:TEMP ('winget-install-' + [guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Path \$workDir -Force | Out-Null; \$acl = Get-Acl -Path \$workDir; \$acl.SetAccessRuleProtection(\$true, \$false); \$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule('NT AUTHORITY\\SYSTEM', 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))); \$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule('BUILTIN\\Administrators', 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))); Set-Acl -Path \$workDir -AclObject \$acl; try { \$bundle = Join-Path \$workDir 'winget.msixbundle'; Invoke-WebRequest -UseBasicParsing -Uri 'https://aka.ms/getwinget' -OutFile \$bundle; \$sig = Get-AuthenticodeSignature -FilePath \$bundle; if ((\$sig.Status -ne 'Valid') -or (\$sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation')) { throw ('winget bundle signature check failed (Status: ' + \$sig.Status + ')') }; try { Add-AppxPackage -Path \$bundle -ErrorAction Stop } catch { Add-AppxProvisionedPackage -Online -PackagePath \$bundle -SkipLicense } } finally { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue \$workDir }\"",
+      command     => "${powershell} -NoProfile -ExecutionPolicy Bypass -Command \"${sprintf($winget::install::common::download_install_template, 'https://aka.ms/getwinget')}\"",
       environment => $download_env,
       timeout     => 600,
       tries       => $retry_count,
       try_sleep   => $retry_interval,
       returns     => $exec_returns,
-      unless      => "${powershell} -NoProfile -Command \"if (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller) { exit 0 } else { exit 1 }\"",
+      unless      => "${powershell} -NoProfile -Command \"${winget::install::common::presence_check}\"",
     }
   }
 }
