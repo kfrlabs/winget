@@ -790,7 +790,7 @@ if $facts['winget_version'] and versioncmp($facts['winget_version'], '1.5.0') >=
 Returns structured upgrade rows for PuppetDB inventory and reporting, e.g.
 `[{'id' => 'Git.Git', 'current_version' => '2.40.0',
 'available_version' => '2.41.0'}]`, or `[]` when winget is absent or the
-query fails. Used by `Class['winget::upgrade']` (one `package` per `id`).
+query fails. Opt-in inventory for PuppetDB (`WINGET_UPGRADES_ENABLED=true` to populate; disabled by default so agents pay no `winget upgrade` round-trip). `Class['winget::upgrade']` does not need it: it enumerates on demand and only falls back to these rows when compiled server-side without winget.
 
 ```puppet
 # Usage in Puppet code
@@ -835,8 +835,7 @@ and [REFERENCE.md](REFERENCE.md#winget--packages).
 
 #### `winget::upgrade`
 
-Declares one `package` with `ensure => latest` per `id` from the
-`winget_upgrades` fact. See [Bulk Upgrade](#bulk-upgrade-all-packages-with-available-updates)
+Declares one `package` with `ensure => latest` per `id` enumerated on demand by the `winget::upgrades` function at catalog-build time (the opt-in `winget_upgrades` fact only provides fallback rows for server-side compilation). See [Bulk Upgrade](#bulk-upgrade-all-packages-with-available-updates)
 and [REFERENCE.md](REFERENCE.md#winget--upgrade).
 
 #### `winget::sources`
@@ -940,7 +939,9 @@ Type: Array of Hash (`id`, `current_version`, `available_version`)
 Description: Structured upgrade rows for PuppetDB inventory and reporting
 (e.g. `[{'id' => 'Git.Git', 'current_version' => '2.40.0',
 'available_version' => '2.41.0'}]`), or `[]` when winget is absent or the
-query fails. Read by `Class['winget::upgrade']` (one `package` per `id`).
+query fails. Opt-in inventory for PuppetDB; `Class['winget::upgrade']`
+does not need it (on-demand enumeration, fact rows only as fallback
+for server-side compilation).
 
 #### `winget_pins`
 
