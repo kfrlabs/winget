@@ -38,6 +38,17 @@ RSpec.describe PuppetX::Winget::Runner do
       expect(result.exitstatus).to eq(0)
     end
 
+    it 'closes child stdin so a stdin-reading child gets EOF and fails fast (issue #78)' do
+      require 'rbconfig'
+      start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      result = nil
+      expect {
+        result = described_class.run([RbConfig.ruby, '-e', 'STDIN.read'], timeout: 10)
+      }.not_to raise_error
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - start).to be < 10
+      expect(result.exitstatus).to eq(0)
+    end
+
     it 'raises TimeoutError when a stub process sleeps longer than the timeout and leaves no orphan' do
       pid = nil
       allow(Open3).to receive(:popen2e).and_wrap_original do |original, *argv|

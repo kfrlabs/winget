@@ -52,6 +52,13 @@ module PuppetX
           require 'puppet/util/execution'
 
           stdin, stdout_err, wait_thr = Open3.popen2e(*argv)
+          # Close child stdin immediately so a stdin-reading child gets EOF
+          # and fails fast instead of blocking until the timeout.
+          begin
+            stdin.close unless stdin.nil? || stdin.closed?
+          rescue StandardError
+            nil
+          end
           pid = wait_thr.pid
           output = +''
           reader = Thread.new do
