@@ -67,16 +67,28 @@ describe 'winget::pin' do
 
     it 'removes a stale non-blocking pin before re-adding (issue #38)' do
       is_expected.to contain_exec('winget-pin-remove-stale-Google.Chrome')
-        .with_onlyif(%r{-not .*Blocking})
+        .with_onlyif(%r{\\sPinning\(\\s\|\$\)})
         .with_before('Exec[winget-pin-add-Google.Chrome]')
+    end
+
+    it 'uses positive Pinning detection so unknown/localized types do not churn (issue #68)' do
+      stale = catalogue.resource('Exec', 'winget-pin-remove-stale-Google.Chrome')
+      expect(stale[:onlyif]).to match(%r{\\sPinning\(\\s\|\$\)})
+      expect(stale[:onlyif]).not_to match(%r{-not\s*\(\$raw[^)]*Blocking})
     end
   end
 
   context 'with a plain pin (issue #38)' do
     it 'removes a stale blocking pin before re-adding' do
       stale = catalogue.resource('Exec', 'winget-pin-remove-stale-Google.Chrome')
-      expect(stale[:onlyif]).to match(%r{Blocking})
+      expect(stale[:onlyif]).to match(%r{\\sBlocking\(\\s\|\$\)})
       expect(stale[:before].to_s).to eq('Exec[winget-pin-add-Google.Chrome]')
+    end
+
+    it 'uses positive Blocking detection so unknown/localized types do not churn (issue #68)' do
+      stale = catalogue.resource('Exec', 'winget-pin-remove-stale-Google.Chrome')
+      expect(stale[:onlyif]).to match(%r{\\sBlocking\(\\s\|\$\)})
+      expect(stale[:onlyif]).not_to match(%r{-not\s*\(\$raw[^)]*-Pattern})
     end
 
     it 'orders the stale removal before the add' do

@@ -21,10 +21,13 @@
 # removal is ordered before the add, and the add guard is re-evaluated after
 # the removal). `source` cannot be compared (`pin list` shows no source
 # column), so changing only `source` on an existing pin has no effect:
-# remove it (`ensure => absent`) and re-add it instead. On winget builds
-# whose `pin list` renders no pin-type column, the `blocking` comparison
-# degrades to presence-only and a changed `blocking` flag behaves like
-# before (documented limitation, warned about in the reference).
+# remove it (`ensure => absent`) and re-add it instead. The `blocking`
+# comparison uses positive English token detection (`Pinning` marks a plain
+# pin stale under `blocking => true`, `Blocking` marks a blocking pin stale
+# under `blocking => false`): with an unknown or localized
+# pin-type value, or on winget builds whose `pin list` renders no pin-type
+# column, it degrades to presence-only and a changed `blocking` flag is
+# ignored (documented limitation, warned about in the reference).
 #
 # Nothing is declared while winget itself is absent (fresh bootstrap): order
 # pins after the bootstrap class so they converge on the next run:
@@ -121,8 +124,11 @@ define winget::pin (
       # add guard after this removal (explicit `before`), so a drifted pin
       # converges in a single run and the next run is a no-op. `source` has
       # no column and is not compared (see the parameter docs).
+      # Fail-safe (issue #68): both directions use positive English token
+      # detection, so an unknown/localized type degrades to presence-only
+      # instead of churning every run.
       $blocking_check = $blocking ? {
-        true    => "if (-not (\$raw | Select-String -Quiet -Pattern '\\sBlocking(\\s|\$)')) { \$stale = \$true };",
+        true    => "if (\$raw | Select-String -Quiet -Pattern '\\sPinning(\\s|\$)') { \$stale = \$true };",
         default => "if (\$raw | Select-String -Quiet -Pattern '\\sBlocking(\\s|\$)') { \$stale = \$true };",
       }
       $version_stale_check = $safe_version ? {
