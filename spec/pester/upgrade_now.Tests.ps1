@@ -23,72 +23,39 @@
 
 BeforeAll {
   . (Join-Path $PSScriptRoot '../../tasks/upgrade_now.ps1')
-}
 
-$script:isWindowsOS = ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT)
-$script:powershellExe = $null
-$script:haveWindowsPowerShell = $false
-if ($script:isWindowsOS) {
-  # Join-Path with an empty parent throws, so only resolve on Windows.
-  $script:powershellExe = Join-Path ([System.Environment]::GetFolderPath('Windows')) 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  $script:haveWindowsPowerShell = Test-Path -LiteralPath $script:powershellExe
-}
-
-function Read-FixtureLines {
-  param([Parameter(Mandatory = $true)][string]$RelativePath)
-  # Raw byte read with explicit UTF-8 decoding (identical on 5.1 and 7):
-  # Get-Content would strip the BOM and may mis-decode CJK without one,
-  # while this preserves BOM prefixes and spinner CR frames byte-exactly.
-  $full = Join-Path $PSScriptRoot (Join-Path '../fixtures' $RelativePath)
-  $bytes = [System.IO.File]::ReadAllBytes($full)
-  $text = [System.Text.Encoding]::UTF8.GetString($bytes)
-  return @($text -split "`r?`n")
-}
-
-function New-WingetCmdStub {
-  # A stub "winget.exe" Pester can execute: a .cmd file is a native
-  # command, so & sets $LASTEXITCODE like a real winget.exe would. The
-  # caller passes the stub path as the $winget argument (Find-Winget is
-  # bypassed); the stub ignores its arguments and replays one fixture.
-  # Paths come from the caller: $TestDrive is only visible in test
-  # blocks, not inside helper functions.
-  param(
-    [Parameter(Mandatory = $true)][string]$StubPath,
-    [Parameter(Mandatory = $true)][string]$FixturePath
-  )
-  '@echo off' + "`r`n" + 'type "' + $FixturePath + '"' + "`r`n" | Set-Content -LiteralPath $StubPath -Encoding Ascii -NoNewline
-}
-
-function Invoke-TaskProcess {
-  # Runs a task script in a child Windows PowerShell with $Stdin piped,
-  # optionally hiding every real winget (WindowsApps glob and PATH) so
-  # the lookup outcome is fully determined by the test.
-  param(
-    [Parameter(Mandatory = $true)][string]$TaskPath,
-    [Parameter(Mandatory = $true)][string]$Stdin,
-    [string]$ProgramFilesRoot,
-    [string]$PathValue
-  )
-  $oldPF = $env:ProgramFiles
-  $oldPF64 = ${env:ProgramW6432}
-  $oldPath = $env:PATH
-  try {
-    if ($ProgramFilesRoot) { $env:ProgramFiles = $ProgramFilesRoot; ${env:ProgramW6432} = $ProgramFilesRoot }
-    if ($PathValue) { $env:PATH = $PathValue }
-    $lines = @($Stdin | & $script:powershellExe -NoProfile -ExecutionPolicy Bypass -File $TaskPath 2>&1)
-    return @{ Output = ($lines -join "`n"); ExitCode = $LASTEXITCODE }
-  } finally {
-    $env:ProgramFiles = $oldPF
-    ${env:ProgramW6432} = $oldPF64
-    $env:PATH = $oldPath
+  $script:isWindowsOS = ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT)
+  $script:powershellExe = $null
+  $script:haveWindowsPowerShell = $false
+  if ($script:isWindowsOS) {
+    # Join-Path with an empty parent throws, so only resolve on Windows.
+    $script:powershellExe = Join-Path ([System.Environment]::GetFolderPath('Windows')) 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $script:haveWindowsPowerShell = Test-Path -LiteralPath $script:powershellExe
   }
-}
 
-Describe 'upgrade_now enumeration (stubbed winget)' -Skip:(-not $script:isWindowsOS) {
-  BeforeEach {
-    # $script: scope: helper functions see script scope, not container locals.
-    $script:stubDir = Join-Path $TestDrive 'stubs'
-    New-Item -ItemType Directory -Force -Path $script:stubDir | Out-Null
+  function Read-FixtureLines {
+    param([Parameter(Mandatory = $true)][string]$RelativePath)
+    # Raw byte read with explicit UTF-8 decoding (identical on 5.1 and 7):
+    # Get-Content would strip the BOM and may mis-decode CJK without one,
+    # while this preserves BOM prefixes and spinner CR frames byte-exactly.
+    $full = Join-Path $PSScriptRoot (Join-Path '../fixtures' $RelativePath)
+    $bytes = [System.IO.File]::ReadAllBytes($full)
+    $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+    return @($text -split "`r?`n")
+  }
+
+  function New-WingetCmdStub {
+    # A stub "winget.exe" Pester can execute: a .cmd file is a native
+    # command, so & sets $LASTEXITCODE like a real winget.exe would. The
+    # caller passes the stub path as the $winget argument (Find-Winget is
+    # bypassed); the stub ignores its arguments and replays one fixture.
+    # Paths come from the caller: $TestDrive is only visible in test
+    # blocks, not inside helper functions.
+    param(
+      [Parameter(Mandatory = $true)][string]$StubPath,
+      [Parameter(Mandatory = $true)][string]$FixturePath
+    )
+    '@echo off' + "`r`n" + 'type "' + $FixturePath + '"' + "`r`n" | Set-Content -LiteralPath $StubPath -Encoding Ascii -NoNewline
   }
 
   function Get-StubbedWinget([string]$Name, [string]$FixtureRelativePath) {
@@ -97,6 +64,39 @@ Describe 'upgrade_now enumeration (stubbed winget)' -Skip:(-not $script:isWindow
     $stub = Join-Path $script:stubDir $Name
     New-WingetCmdStub -StubPath $stub -FixturePath $fixture
     return $stub
+  }
+
+  function Invoke-TaskProcess {
+    # Runs a task script in a child Windows PowerShell with $Stdin piped,
+    # optionally hiding every real winget (WindowsApps glob and PATH) so
+    # the lookup outcome is fully determined by the test.
+    param(
+      [Parameter(Mandatory = $true)][string]$TaskPath,
+      [Parameter(Mandatory = $true)][string]$Stdin,
+      [string]$ProgramFilesRoot,
+      [string]$PathValue
+    )
+    $oldPF = $env:ProgramFiles
+    $oldPF64 = ${env:ProgramW6432}
+    $oldPath = $env:PATH
+    try {
+      if ($ProgramFilesRoot) { $env:ProgramFiles = $ProgramFilesRoot; ${env:ProgramW6432} = $ProgramFilesRoot }
+      if ($PathValue) { $env:PATH = $PathValue }
+      $lines = @($Stdin | & $script:powershellExe -NoProfile -ExecutionPolicy Bypass -File $TaskPath 2>&1)
+      return @{ Output = ($lines -join "`n"); ExitCode = $LASTEXITCODE }
+    } finally {
+      $env:ProgramFiles = $oldPF
+      ${env:ProgramW6432} = $oldPF64
+      $env:PATH = $oldPath
+    }
+  }
+}
+
+Describe 'upgrade_now enumeration (stubbed winget)' -Skip:(-not $script:isWindowsOS) {
+  BeforeEach {
+    # $script: scope: helper functions see script scope, not container locals.
+    $script:stubDir = Join-Path $TestDrive 'stubs'
+    New-Item -ItemType Directory -Force -Path $script:stubDir | Out-Null
   }
 
   It 'lists upgradable IDs from stubbed winget output' {

@@ -15,26 +15,57 @@
 
 BeforeAll {
   . (Join-Path $PSScriptRoot '../../tasks/list_upgrades.ps1')
-}
 
-$script:isWindowsOS = ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT)
-$script:powershellExe = $null
-$script:haveWindowsPowerShell = $false
-if ($script:isWindowsOS) {
-  # Join-Path with an empty parent throws, so only resolve on Windows.
-  $script:powershellExe = Join-Path ([System.Environment]::GetFolderPath('Windows')) 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  $script:haveWindowsPowerShell = Test-Path -LiteralPath $script:powershellExe
-}
+  $script:isWindowsOS = ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT)
+  $script:powershellExe = $null
+  $script:haveWindowsPowerShell = $false
+  if ($script:isWindowsOS) {
+    # Join-Path with an empty parent throws, so only resolve on Windows.
+    $script:powershellExe = Join-Path ([System.Environment]::GetFolderPath('Windows')) 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $script:haveWindowsPowerShell = Test-Path -LiteralPath $script:powershellExe
+  }
 
-function Read-FixtureLines {
-  param([Parameter(Mandatory = $true)][string]$RelativePath)
-  # Raw byte read with explicit UTF-8 decoding (identical on 5.1 and 7):
-  # Get-Content would strip the BOM and may mis-decode CJK without one,
-  # while this preserves BOM prefixes and spinner CR frames byte-exactly.
-  $full = Join-Path $PSScriptRoot (Join-Path '../fixtures' $RelativePath)
-  $bytes = [System.IO.File]::ReadAllBytes($full)
-  $text = [System.Text.Encoding]::UTF8.GetString($bytes)
-  return @($text -split "`r?`n")
+  function Read-FixtureLines {
+    param([Parameter(Mandatory = $true)][string]$RelativePath)
+    # Raw byte read with explicit UTF-8 decoding (identical on 5.1 and 7):
+    # Get-Content would strip the BOM and may mis-decode CJK without one,
+    # while this preserves BOM prefixes and spinner CR frames byte-exactly.
+    $full = Join-Path $PSScriptRoot (Join-Path '../fixtures' $RelativePath)
+    $bytes = [System.IO.File]::ReadAllBytes($full)
+    $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+    return @($text -split "`r?`n")
+  }
+
+  function New-FakeWingetInstall([string]$Root, [string]$Version) {
+    $dir = Join-Path $Root "WindowsApps\Microsoft.DesktopAppInstaller_${Version}__8wekyb3d8bbwe"
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    New-Item -ItemType File -Force -Path (Join-Path $dir 'winget.exe') | Out-Null
+  }
+
+  function Invoke-TaskProcess {
+    # Runs a task script in a child Windows PowerShell with $Stdin piped,
+    # optionally hiding every real winget (WindowsApps glob and PATH) so
+    # the lookup outcome is fully determined by the test.
+    param(
+      [Parameter(Mandatory = $true)][string]$TaskPath,
+      [Parameter(Mandatory = $true)][string]$Stdin,
+      [string]$ProgramFilesRoot,
+      [string]$PathValue
+    )
+    $oldPF = $env:ProgramFiles
+    $oldPF64 = ${env:ProgramW6432}
+    $oldPath = $env:PATH
+    try {
+      if ($ProgramFilesRoot) { $env:ProgramFiles = $ProgramFilesRoot; ${env:ProgramW6432} = $ProgramFilesRoot }
+      if ($PathValue) { $env:PATH = $PathValue }
+      $lines = @($Stdin | & $script:powershellExe -NoProfile -ExecutionPolicy Bypass -File $TaskPath 2>&1)
+      return @{ Output = ($lines -join "`n"); ExitCode = $LASTEXITCODE }
+    } finally {
+      $env:ProgramFiles = $oldPF
+      ${env:ProgramW6432} = $oldPF64
+      $env:PATH = $oldPath
+    }
+  }
 }
 
 Describe 'list_upgrades parsing (Get-UpgradeRows)' {
@@ -126,12 +157,6 @@ Describe 'list_upgrades Find-Winget' -Skip:(-not $script:isWindowsOS) {
     $env:PATH = $script:oldPath
   }
 
-  function New-FakeWingetInstall([string]$Root, [string]$Version) {
-    $dir = Join-Path $Root "WindowsApps\Microsoft.DesktopAppInstaller_${Version}__8wekyb3d8bbwe"
-    New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    New-Item -ItemType File -Force -Path (Join-Path $dir 'winget.exe') | Out-Null
-  }
-
   It 'picks the highest version numerically (1.10 over 1.9)' {
     $root = Join-Path $TestDrive 'pf'
     New-FakeWingetInstall $root '1.8.0.0'
@@ -153,31 +178,6 @@ Describe 'list_upgrades Find-Winget' -Skip:(-not $script:isWindowsOS) {
     New-Item -ItemType File -Force -Path (Join-Path $bin 'winget.exe') | Out-Null
     $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$env:PATH"
     Find-Winget | Should -BeLike '*WindowsApps*'
-  }
-}
-
-function Invoke-TaskProcess {
-  # Runs a task script in a child Windows PowerShell with $Stdin piped,
-  # optionally hiding every real winget (WindowsApps glob and PATH) so
-  # the lookup outcome is fully determined by the test.
-  param(
-    [Parameter(Mandatory = $true)][string]$TaskPath,
-    [Parameter(Mandatory = $true)][string]$Stdin,
-    [string]$ProgramFilesRoot,
-    [string]$PathValue
-  )
-  $oldPF = $env:ProgramFiles
-  $oldPF64 = ${env:ProgramW6432}
-  $oldPath = $env:PATH
-  try {
-    if ($ProgramFilesRoot) { $env:ProgramFiles = $ProgramFilesRoot; ${env:ProgramW6432} = $ProgramFilesRoot }
-    if ($PathValue) { $env:PATH = $PathValue }
-    $lines = @($Stdin | & $script:powershellExe -NoProfile -ExecutionPolicy Bypass -File $TaskPath 2>&1)
-    return @{ Output = ($lines -join "`n"); ExitCode = $LASTEXITCODE }
-  } finally {
-    $env:ProgramFiles = $oldPF
-    ${env:ProgramW6432} = $oldPF64
-    $env:PATH = $oldPath
   }
 }
 
