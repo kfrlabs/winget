@@ -1226,6 +1226,22 @@ pdk test unit
 pdk validate
 ```
 
+### Pester task tests (Windows)
+
+The Bolt task scripts (`tasks/*.ps1`) are executed for real by Pester 5
+suites in `spec/pester/` (one `*.Tests.ps1` per task plus captured static
+winget output fixtures under `spec/fixtures/` and
+`spec/pester/fixtures/`): table parsing across locales, fail-closed input
+validation, `Find-Winget` version selection and failure paths, all with
+stubbed winget output so no live winget is needed. The scripts are
+import-safe (dot-sourcing defines their functions without running the
+task). CI runs them in the `pester` job on `windows-latest`.
+
+```powershell
+# From a Windows checkout (Windows PowerShell 5.1 or PowerShell 7)
+Invoke-Pester -Path spec/pester
+```
+
 ### Generating Documentation
 
 ```bash

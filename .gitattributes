@@ -3,3 +3,7 @@
 *.pp eol=lf
 *.sh eol=lf
 *.epp eol=lf
+# Task/Pester fixtures are byte-exact (BOM prefixes, spinner CR frames,
+# CJK bytes): never convert their line endings on checkout.
+spec/fixtures/** -text
+spec/pester/fixtures/** -text
